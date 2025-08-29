@@ -6,6 +6,7 @@ import json
 import time
 from pydantic import BaseModel
 import paho.mqtt.client as mqtt
+from paho.mqtt.client import CallbackAPIVersion  # Added import
 import jwt
 from sklearn.ensemble import IsolationForest
 import numpy as np
@@ -47,7 +48,7 @@ init_db()
 
 # MQTT client
 MQTT_BROKER = "broker.hivemq.com"
-mqtt_client = mqtt.Client()
+mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)  # Updated to VERSION2
 mqtt_client.connect(MQTT_BROKER, 1883, 60)
 mqtt_client.loop_start()
 
