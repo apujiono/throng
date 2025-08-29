@@ -4,20 +4,23 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import sqlite3
 import json
 import time
+import os
 from pydantic import BaseModel
 import paho.mqtt.client as mqtt
-from paho.mqtt.client import CallbackAPIVersion  # Added import
+from paho.mqtt.client import CallbackAPIVersion
 import jwt
 from sklearn.ensemble import IsolationForest
 import numpy as np
-import os
 
 app = FastAPI()
 security = HTTPBearer()
 
-# Konfigurasi JWT
+# Konfigurasi JWT dan MQTT
 JWT_SECRET = os.getenv("JWT_SECRET", "throng_default_secret_1234567890")
 JWT_ALGORITHM = "HS256"
+MQTT_BROKER = os.getenv("MQTT_BROKER", "5374fec8494a4a24add8bb27fe4ddae5.s1.eu.hivemq.cloud:8883")
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "throng_user")  # Ganti dengan usernamemu
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "ThrongPass123!")  # Ganti dengan passwordmu
 
 # Model untuk perintah
 class Command(BaseModel):
@@ -47,9 +50,16 @@ def init_db():
 init_db()
 
 # MQTT client
-MQTT_BROKER = "broker.hivemq.com"
-mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)  # Updated to VERSION2
-mqtt_client.connect(MQTT_BROKER, 1883, 60)
+mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+def on_connect(client, userdata, flags, rc, properties=None):
+    print(f"MQTT connected with result code {rc}")
+    if rc == 0:
+        client.subscribe("throng/#")  # Subscribe ke semua topik Throng
+mqtt_client.on_connect = on_connect
+mqtt_client.tls_set()  # Aktifkan TLS untuk HiveMQ Cloud
+mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+mqtt_client.connect(MQTT_BROKER.split(":")[0], int(MQTT_BROKER.split(":")[1]), 60)
+time.sleep(1)  # Tunggu koneksi stabil
 mqtt_client.loop_start()
 
 # Model Isolation Forest
@@ -159,6 +169,7 @@ async def websocket_endpoint(websocket: WebSocket):
         conn.close()
 
         await websocket.send_text(f"Hive received report from {agent_id}")
+
 @app.get("/")
 async def root():
     return {"message": "Throng Hive is alive!"}
