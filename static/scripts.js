@@ -17,15 +17,11 @@ async function fetchData() {
     }
     const data = await response.json();
     
-    // Update agents table
     allAgents = data.agents;
     filterAgents();
-
-    // Update targets table
     allTargets = data.targets;
     filterTargets();
 
-    // Update emergency logs
     const emergencyLogs = document.getElementById('emergencyLogs');
     emergencyLogs.innerHTML = '';
     data.emergency_logs.forEach(log => {
@@ -38,14 +34,12 @@ async function fetchData() {
             </tr>`;
     });
 
-    // Update activity log
     const activityLog = document.getElementById('activityLog');
     activityLog.innerHTML = '';
     data.reports.forEach(report => {
         activityLog.innerHTML += `<p>${report.timestamp} | ${report.agent_id}: ${JSON.stringify(report.data)}</p>`;
     });
 
-    // Update traffic chart
     const trafficData = data.reports.map(report => report.data.network_traffic || 0);
     const labels = data.reports.map(report => report.timestamp);
     const ctxTraffic = document.getElementById('trafficChart').getContext('2d');
@@ -61,12 +55,9 @@ async function fetchData() {
                 fill: true
             }]
         },
-        options: {
-            scales: { y: { beginAtZero: true } }
-        }
+        options: { scales: { y: { beginAtZero: true } } }
     });
 
-    // Update threat chart
     const threatData = data.reports.map(report => report.data.is_anomaly ? 1 : 0);
     const ctxThreat = document.getElementById('threatChart').getContext('2d');
     new Chart(ctxThreat, {
@@ -76,15 +67,12 @@ async function fetchData() {
             datasets: [{
                 label: 'Threats Detected',
                 data: threatData,
-                backgroundColor: emergencyMode ? 'rgba(255, 0, 0, 0.5)' : 'rgba(0, 255, 0, 0.5)',
+                backgroundColor: emergencyMode ? 'rgba(255, 0, 0, 0.5)' : 'rgba(0, 255, 0, 0.5)'
             }]
         },
-        options: {
-            scales: { y: { beginAtZero: true } }
-        }
+        options: { scales: { y: { beginAtZero: true } } }
     });
 
-    // Update network map
     const networkContainer = document.getElementById('network');
     const network = new vis.Network(networkContainer, data.network, {
         nodes: { shape: 'dot', size: 20 },
@@ -92,14 +80,12 @@ async function fetchData() {
         physics: { enabled: true }
     });
 
-    // Update agent dropdown
     const agentSelect = document.getElementById('agentId');
     agentSelect.innerHTML = '<option value="">Select Agent</option>';
     data.agents.forEach(agent => {
         agentSelect.innerHTML += `<option value="${agent.agent_id}">${agent.agent_id}</option>`;
     });
 
-    // Update tagline
     const tagline = document.getElementById('tagline');
     if (emergencyMode) {
         tagline.classList.add('emergency-mode');
