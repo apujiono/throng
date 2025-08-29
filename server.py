@@ -5,16 +5,17 @@ import sqlite3
 import json
 import time
 from pydantic import BaseModel
-from kafka import KafkaProducer, KafkaConsumer
+import paho.mqtt.client as mqtt
+import jwt
 from sklearn.ensemble import IsolationForest
 import numpy as np
-import jwt
+import os
 
 app = FastAPI()
 security = HTTPBearer()
 
 # Konfigurasi JWT
-JWT_SECRET = "throng_secret_key"
+JWT_SECRET = os.getenv("JWT_SECRET", "throng_default_secret_1234567890")
 JWT_ALGORITHM = "HS256"
 
 # Model untuk perintah
@@ -44,8 +45,11 @@ def init_db():
 
 init_db()
 
-# Kafka producer
-producer = KafkaProducer(bootstrap_servers=['localhost:9092'], value_serializer=lambda v: json.dumps(v).encode('utf-8'))
+# MQTT client
+MQTT_BROKER = "broker.hivemq.com"
+mqtt_client = mqtt.Client()
+mqtt_client.connect(MQTT_BROKER, 1883, 60)
+mqtt_client.loop_start()
 
 # Model Isolation Forest
 anomaly_model = IsolationForest(contamination=0.1, random_state=42)
@@ -128,16 +132,16 @@ async def send_command(command: Command):
     conn.commit()
     conn.close()
 
-    producer.send(f"throng_commands_{command.agent_id}", command.dict())
+    mqtt_client.publish(f"throng/commands/{command.agent_id}", json.dumps(command.dict()))
     return {"status": f"Command {command.action} sent to {command.agent_id}"}
 
 # WebSocket untuk laporan
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    consumer = KafkaConsumer('throng_reports', bootstrap_servers=['localhost:9092'], value_deserializer=lambda x: json.loads(x.decode('utf-8')))
-    for msg in consumer:
-        report = msg.value
+    while True:
+        data = await websocket.receive_text()
+        report = json.loads(data)
         agent_id = report.get("agent_id")
         report_data = report.get("data")
 
