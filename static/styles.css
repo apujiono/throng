@@ -2,7 +2,8 @@ body {
     font-family: Arial, sans-serif;
     margin: 0;
     padding: 20px;
-    background-color: #f4f4f4;
+    background-color: #1a1a1a;
+    color: #e0e0e0;
 }
 
 .container {
@@ -12,7 +13,9 @@ body {
 
 h1 {
     text-align: center;
-    color: #333;
+    color: #00b7eb;
+    text-shadow: 2px 2px 4px #000;
+    animation: fadeIn 1s;
 }
 
 .token-section {
@@ -21,53 +24,64 @@ h1 {
 }
 
 .token-section input {
-    padding: 5px;
+    padding: 10px;
     width: 300px;
+    border: 2px solid #00b7eb;
+    border-radius: 5px;
+    background-color: #2c2c2c;
+    color: #e0e0e0;
 }
 
 .token-section button {
-    padding: 5px 10px;
-    background-color: #007bff;
-    color: white;
+    padding: 10px 20px;
+    background-color: #00ff00;
+    color: #1a1a1a;
     border: none;
+    border-radius: 5px;
     cursor: pointer;
+    transition: background-color 0.3s;
 }
 
 .token-section button:hover {
-    background-color: #0056b3;
+    background-color: #00cc00;
 }
 
 .tabs {
     overflow: hidden;
-    border-bottom: 1px solid #ccc;
+    border-bottom: 2px solid #00b7eb;
     margin-bottom: 20px;
+    display: flex;
 }
 
 .tab {
-    background-color: inherit;
-    float: left;
+    background-color: #2c2c2c;
     border: none;
     outline: none;
     cursor: pointer;
-    padding: 14px 16px;
-    transition: 0.3s;
+    padding: 14px 20px;
+    transition: background-color 0.3s, color 0.3s;
     font-size: 16px;
+    flex: 1;
+    text-align: center;
 }
 
 .tab:hover {
-    background-color: #ddd;
+    background-color: #444;
+    color: #00ff00;
 }
 
 .tab.active {
-    background-color: #007bff;
-    color: white;
+    background-color: #00b7eb;
+    color: #1a1a1a;
 }
 
 .tab-content {
     display: none;
     padding: 20px;
-    border: 1px solid #ccc;
+    border: 2px solid #00b7eb;
     border-top: none;
+    border-radius: 0 0 5px 5px;
+    background-color: #2c2c2c;
 }
 
 .tab-content.active {
@@ -78,36 +92,38 @@ table {
     width: 100%;
     border-collapse: collapse;
     margin-top: 10px;
+    background-color: #333;
 }
 
 th, td {
-    padding: 10px;
+    padding: 12px;
     text-align: left;
-    border: 1px solid #ddd;
+    border: 1px solid #444;
+    transition: background-color 0.3s;
 }
 
 th {
-    background-color: #007bff;
-    color: white;
+    background-color: #00b7eb;
+    color: #1a1a1a;
     cursor: pointer;
 }
 
 th:hover {
-    background-color: #0056b3;
-}
-
-tr:nth-child(even) {
-    background-color: #f2f2f2;
+    background-color: #00ccff;
 }
 
 tr:hover {
-    background-color: #ddd;
+    background-color: #444;
 }
 
 input[type="text"] {
-    padding: 5px;
+    padding: 10px;
     margin-bottom: 10px;
     width: 200px;
+    border: 2px solid #00b7eb;
+    border-radius: 5px;
+    background-color: #2c2c2c;
+    color: #e0e0e0;
 }
 
 #notifications {
@@ -116,8 +132,20 @@ input[type="text"] {
     right: 20px;
     width: 300px;
     background-color: #333;
-    color: white;
-    padding: 10px;
+    color: #e0e0e0;
+    padding: 15px;
     border-radius: 5px;
+    box-shadow: 0 0 10px rgba(0, 183, 235, 0.5);
     display: none;
+    animation: slideIn 0.5s;
+}
+
+@keyframes slideIn {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
