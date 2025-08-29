@@ -71,12 +71,25 @@ init_db()
 
 # MQTT client
 mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+active_websockets = []
+
 def on_connect(client, userdata, flags, rc, properties=None):
     logger.info(f"MQTT connected with result code {rc}")
     if rc == 0:
-        client.subscribe("throng/#")  # Subscribe ke semua topik Throng
+        client.subscribe("throng/#")
+
+def on_message(client, userdata, msg):
+    if msg.topic == "throng/reports":
+        report = json.loads(msg.payload.decode())
+        for ws in active_websockets:
+            try:
+                ws.send_text(json.dumps({"type": "report", "data": report}))
+            except:
+                active_websockets.remove(ws)
+
 mqtt_client.on_connect = on_connect
-mqtt_client.tls_set()  # Aktifkan TLS untuk HiveMQ Cloud
+mqtt_client.on_message = on_message
+mqtt_client.tls_set()
 mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 mqtt_client.connect(MQTT_BROKER.split(":")[0], int(MQTT_BROKER.split(":")[1]), 60)
 time.sleep(1)
@@ -252,7 +265,7 @@ async def send_command(command: Command):
         ws.send_text(json.dumps({"type": "command", "data": command.dict()}))
     return {"status": f"Command {command.action} sent to {command.agent_id}"}
 
-# WebSocket untuk real-time updates
+# WebSocket untuk laporan
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
