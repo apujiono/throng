@@ -7,3 +7,4 @@ python-nmap
 pyjwt
 scikit-learn
 numpy
+jinja2
