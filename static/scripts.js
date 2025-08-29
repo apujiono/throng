@@ -1,3 +1,4 @@
+let ws = null;
 let token = '';
 
 function showNotification(message, type = 'info') {
@@ -10,62 +11,77 @@ function showNotification(message, type = 'info') {
     }, 5000);
 }
 
-function fetchData() {
+function connectWebSocket() {
     token = document.getElementById('tokenInput').value;
     if (!token) {
         showNotification('Please enter a valid JWT token', 'error');
         return;
     }
-    updateData();
+    localStorage.setItem('throngToken', token);
+
+    if (ws) ws.close();
+    ws = new WebSocket(`wss://${window.location.host}/ws`);
+    ws.onopen = () => {
+        ws.send(JSON.stringify({ token }));
+        showNotification('Connected to Hive WebSocket');
+    };
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'report') updateReport(data.data);
+        if (data.type === 'command') showNotification(`Command sent: ${data.data.action}`);
+        if (data.type === 'update') updateAgentStatus(data.data.agent_id, data.data.status);
+    };
+    ws.onerror = (error) => showNotification(`WebSocket error: ${error}`, 'error');
+    ws.onclose = () => showNotification('WebSocket disconnected', 'error');
 }
 
-function updateData() {
-    if (!token) return;
+function updateAgentStatus(agentId, status) {
+    const table = document.getElementById('agentsTable');
+    const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+    for (let row of rows) {
+        if (row.cells[0].textContent === agentId) {
+            row.cells[1].textContent = status;
+            row.cells[1].style.color = status === 'active' ? '#00ff00' : '#ff0000';
+            break;
+        }
+    }
+}
 
-    fetch('/api/data', {
-        headers: { 'Authorization': `Bearer ${token}` }
-    })
-    .then(response => {
-        if (!response.ok) throw new Error('Unauthorized');
-        return response.json();
-    })
-    .then(data => {
-        updateTable('agentsTable', data.agents, ['agent_id', 'status', 'last_seen', 'ip', 'host'], (row, agent) => {
-            const actionsCell = row.insertCell(5);
-            const spawnButton = document.createElement('button');
-            spawnButton.textContent = 'Spawn';
-            spawnButton.onclick = () => sendCommand(agent.agent_id, 'spawn_agent', '192.168.1.10');
-            actionsCell.appendChild(spawnButton);
-        });
-        updateTable('reportsTable', data.reports, ['agent_id', 'timestamp', 'data.network_traffic', 'data.is_anomaly', 'data.ip'], (row, report) => {
-            row.cells[3].textContent = report.data.is_anomaly ? 'Yes' : 'No';
-        });
-        updateTable('targetsTable', data.targets, ['target', 'vulnerability', 'status', 'timestamp', 'score']);
-        updateTable('emergencyTable', data.emergency_logs, ['agent_id', 'action', 'details', 'timestamp'], (row, log) => {
-            row.cells[2].textContent = JSON.stringify(log.details);
-        });
-        showNotification('Data updated successfully');
-    })
-    .catch(error => {
-        showNotification(`Error fetching data: ${error.message}`, 'error');
-        console.error('Error:', error);
+function updateReport(report) {
+    updateTable('reportsTable', [report], ['agent_id', 'data.timestamp', 'data.network_traffic', 'data.is_anomaly', 'data.ip'], (row, report) => {
+        row.cells[3].textContent = report.data.is_anomaly ? 'Yes' : 'No';
+        row.cells[3].style.color = report.data.is_anomaly ? '#ff0000' : '#00ff00';
     });
 }
 
 function updateTable(tableId, data, columns, customRender = null) {
     const table = document.getElementById(tableId);
     const tbody = table.getElementsByTagName('tbody')[0];
-    tbody.innerHTML = '';
+    let updated = false;
 
     data.forEach(item => {
-        const row = tbody.insertRow();
+        let row = Array.from(tbody.getElementsByTagName('tr')).find(r => r.cells[0].textContent === item.agent_id || r.cells[0].textContent === item.target);
+        if (!row) {
+            row = tbody.insertRow();
+            updated = true;
+        }
+        while (row.cells.length > columns.length + (tableId === 'agentsTable' ? 1 : 0)) row.deleteCell(-1);
         columns.forEach((col, index) => {
-            const cell = row.insertCell(index);
+            const cell = row.cells[index] || row.insertCell(index);
             const value = col.split('.').reduce((obj, key) => obj ? obj[key] : '', item) || 'N/A';
             cell.textContent = value;
         });
         if (customRender) customRender(row, item);
+        if (tableId === 'agentsTable' && !row.cells[5]) {
+            const actionsCell = row.insertCell(5);
+            const spawnButton = document.createElement('button');
+            spawnButton.textContent = 'Spawn';
+            spawnButton.onclick = () => sendCommand(item.agent_id, 'spawn_agent', '192.168.1.10');
+            actionsCell.appendChild(spawnButton);
+        }
     });
+
+    if (updated) filterTable(tableId);
 }
 
 function filterTable(tableId) {
@@ -76,7 +92,7 @@ function filterTable(tableId) {
     for (let i = 0; i < tr.length; i++) {
         let found = false;
         const td = tr[i].getElementsByTagName('td');
-        for (let j = 0; j < td.length; j++) {
+        for (let j = 0; j < td.length - (tableId === 'agentsTable' ? 1 : 0); j++) {
             if (td[j].textContent.toLowerCase().indexOf(input) > -1) {
                 found = true;
                 break;
@@ -127,7 +143,7 @@ function sortTable(tableId, n) {
 
 function sendCommand(agentId, action, target) {
     if (!token) {
-        showNotification('Please enter a valid JWT token first', 'error');
+        showNotification('Please connect with a valid JWT token first', 'error');
         return;
     }
 
@@ -155,15 +171,11 @@ function openTab(tabName) {
     document.querySelector(`[onclick="openTab('${tabName}')"]`).className += ' active';
 }
 
-// Auto-refresh every 30 seconds
-setInterval(updateData, 30000);
-
 // Initial load
 document.addEventListener('DOMContentLoaded', () => {
     const savedToken = localStorage.getItem('throngToken');
     if (savedToken) {
         document.getElementById('tokenInput').value = savedToken;
-        fetchData();
     }
 });
 
