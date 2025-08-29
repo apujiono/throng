@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pykafka
+psutil
+paramiko
+python-nmap
+pyjwt
+scikit-learn
+numpy
