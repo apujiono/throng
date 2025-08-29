@@ -1,4 +1,5 @@
 import paho.mqtt.client as mqtt
+from paho.mqtt.client import CallbackAPIVersion  # Added import
 import json
 import time
 import uuid
@@ -22,14 +23,14 @@ TOPIC_SCANS = "throng/scans"
 TOPIC_EMERGENCY = "throng/emergency"
 
 # Callback saat terkoneksi
-def on_connect(client, userdata, flags, rc):
+def on_connect(client, userdata, flags, rc, properties=None):  # Updated signature for VERSION2
     print(f"Agent {AGENT_ID} connected with code {rc}")
     client.subscribe(TOPIC_COMMANDS)
     client.subscribe(TOPIC_PEER)
     client.subscribe(TOPIC_EMERGENCY)
 
 # Callback saat menerima perintah
-def on_message(client, userdata, msg):
+def on_message(client, userdata, msg):  # Updated signature for VERSION2
     command = json.loads(msg.payload.decode())
     if command.get("agent_id") == AGENT_ID or msg.topic in [TOPIC_PEER, TOPIC_EMERGENCY]:
         action = command.get("action")
@@ -270,7 +271,7 @@ def log_action(action, target, emergency=False, details=""):
         f.write(f"{datetime.now().isoformat()} | Action: {action} | Target: {target} | Emergency: {emergency} | Details: {details}\n")
 
 # Inisialisasi MQTT client
-client = mqtt.Client()
+client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)  # Updated to VERSION2
 client.on_connect = on_connect
 client.on_message = on_message
 client.connect(MQTT_BROKER, 1883, 60)
