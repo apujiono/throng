@@ -1,0 +1,108 @@
+body {
+    background-color: #1a1a1a;
+    color: #00ff00;
+    font-family: 'Roboto Mono', monospace;
+    margin: 0;
+    padding: 20px;
+}
+h1 {
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px #00ff00;
+    animation: glitch 1s linear infinite;
+}
+@keyframes glitch {
+    2%, 64% { transform: translate(2px, 0) skew(0deg); }
+    4%, 60% { transform: translate(-2px, 0) skew(0deg); }
+    62% { transform: translate(0, 0) skew(5deg); }
+}
+.tagline {
+    text-align: center;
+    font-size: 16px;
+    margin-bottom: 20px;
+    opacity: 0.8;
+}
+.emergency-mode {
+    color: #ff0000;
+    text-shadow: 0 0 10px #ff0000;
+    animation: pulse 1s infinite;
+}
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+.container {
+    max-width: 1400px;
+    margin: auto;
+}
+.section {
+    margin-bottom: 30px;
+}
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: #2a2a2a;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+}
+.table th, .table td {
+    padding: 10px;
+    border: 1px solid #00ff00;
+    text-align: left;
+}
+.table th {
+    background-color: #3a3a3a;
+}
+.chart-container {
+    background-color: #2a2a2a;
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+}
+.network-container {
+    height: 600px;
+    background-color: #2a2a2a;
+    border: 1px solid #00ff00;
+    border-radius: 5px;
+}
+.command-form {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+.command-form input, .command-form select, .command-form button {
+    padding: 8px;
+    background-color: #3a3a3a;
+    color: #00ff00;
+    border: 1px solid #00ff00;
+    border-radius: 3px;
+    font-family: 'Roboto Mono', monospace;
+}
+.command-form button {
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+.command-form button:hover {
+    background-color: #00ff00;
+    color: #1a1a1a;
+}
+.log {
+    background-color: #2a2a2a;
+    padding: 10px;
+    height: 300px;
+    overflow-y: auto;
+    border: 1px solid #00ff00;
+    border-radius: 5px;
+}
+.filter {
+    margin-bottom: 10px;
+}
+.filter input {
+    width: 300px;
+    padding: 8px;
+    background-color: #3a3a3a;
+    color: #00ff00;
+    border: 1px solid #00ff00;
+    border-radius: 3px;
+}
