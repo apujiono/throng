@@ -71,11 +71,24 @@ init_db()
 
 # MQTT client
 mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+active_websockets = []
+
 def on_connect(client, userdata, flags, rc, properties=None):
     logger.info(f"MQTT connected with result code {rc}")
     if rc == 0:
         client.subscribe("throng/reports")  # Subscribe khusus ke laporan
+
+def on_message(client, userdata, msg):
+    if msg.topic == "throng/reports":
+        report = json.loads(msg.payload.decode())
+        for ws in active_websockets:
+            try:
+                ws.send_text(json.dumps({"type": "report", "data": report}))
+            except:
+                active_websockets.remove(ws)
+
 mqtt_client.on_connect = on_connect
+mqtt_client.on_message = on_message
 mqtt_client.tls_set()
 mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 mqtt_client.connect(MQTT_BROKER.split(":")[0], int(MQTT_BROKER.split(":")[1]), 60)
@@ -191,7 +204,7 @@ async def get_token():
 async def get_dashboard_data():
     conn = sqlite3.connect("throng.db")
     c = conn.cursor()
-    c.execute("SELECT agent_id, status, last_seen, ip, host FROM agents")
+    c.execute("SELECT agent_id, status, last_seen, ip, host FROM agents WHERE status = 'active'")
     agents = [{"agent_id": row[0], "status": row[1], "last_seen": row[2], "ip": row[3], "host": row[4]} for row in c.fetchall()]
     c.execute("SELECT target, vulnerability, status, timestamp, score FROM targets")
     targets = [{"target": row[0], "vulnerability": json.loads(row[1]), "status": row[2], "timestamp": row[3], "score": row[4]} for row in c.fetchall()]
@@ -248,14 +261,17 @@ async def send_command(command: Command):
     conn.close()
 
     mqtt_client.publish(f"throng/commands/{command.agent_id}", json.dumps(command.dict()))
+    for ws in active_websockets:
+        ws.send_text(json.dumps({"type": "command", "data": command.dict()}))
     return {"status": f"Command {command.action} sent to {command.agent_id}"}
 
-# WebSocket untuk laporan
+# WebSocket untuk real-time updates
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    while True:
-        try:
+    active_websockets.append(websocket)
+    try:
+        while True:
             data = await websocket.receive_text()
             logger.info(f"Received WebSocket data: {data}")
             report = json.loads(data)
@@ -274,10 +290,11 @@ async def websocket_endpoint(websocket: WebSocket):
             conn.commit()
             conn.close()
 
-            await websocket.send_text(f"Hive received report from {agent_id}")
-        except Exception as e:
-            logger.error(f"WebSocket error: {e}")
-            await websocket.send_text(f"Error processing report: {e}")
+            await websocket.send_text(json.dumps({"type": "update", "data": {"agent_id": agent_id, "status": "active"}}))
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+    finally:
+        active_websockets.remove(websocket)
 
 # Endpoint utama untuk render dashboard
 @app.get("/", response_class=HTMLResponse)
