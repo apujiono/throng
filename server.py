@@ -1,5 +1,6 @@
-from fastapi import FastAPI, WebSocket, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, HTTPException, Depends, Request
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 import sqlite3
@@ -15,6 +16,7 @@ import numpy as np
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")  # Untuk melayani file statis seperti CSS
+templates = Jinja2Templates(directory="templates")  # Konfigurasi Jinja2 untuk templating
 security = HTTPBearer()
 
 # Konfigurasi JWT dan MQTT
@@ -172,6 +174,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
         await websocket.send_text(f"Hive received report from {agent_id}")
 
-@app.get("/")
-async def root():
-    return {"message": "Throng Hive is alive!"}
+# Endpoint utama untuk render dashboard
+@app.get("/", response_class=HTMLResponse)
+async def read_root(request: Request):
+    return templates.TemplateResponse("dashboard.html", {"request": request})
