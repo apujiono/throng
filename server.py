@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.staticfiles import StaticFiles
 import sqlite3
 import json
 import time
@@ -13,6 +14,7 @@ from sklearn.ensemble import IsolationForest
 import numpy as np
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")  # Untuk melayani file statis seperti CSS
 security = HTTPBearer()
 
 # Konfigurasi JWT dan MQTT
