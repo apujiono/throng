@@ -1,85 +1,61 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Throng Hive Overlord</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Throng Hive Dashboard</title>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-    <h1>Throng Hive Overlord</h1>
-    <p class="tagline" id="tagline">The Swarm Devours All Threats.</p>
-    <div class="container">
-        <div class="section">
-            <h2>Network Map</h2>
-            <div class="network-container" id="network"></div>
+    <div id="container">
+        <h1>Throng Hive Dashboard</h1>
+        <div id="token-input">
+            <label for="jwt-token">JWT Token:</label>
+            <input type="text" id="jwt-token" placeholder="Enter JWT Token">
+            <button onclick="loadData()">Submit</button>
         </div>
-        <div class="section">
-            <h2>Threat Analysis</h2>
-            <div class="chart-container">
-                <canvas id="threatChart"></canvas>
-            </div>
-        </div>
-        <div class="section">
-            <h2>Network Traffic</h2>
-            <div class="chart-container">
-                <canvas id="trafficChart"></canvas>
-            </div>
-        </div>
-        <div class="section">
-            <h2>Agents</h2>
-            <div class="filter">
-                <input type="text" id="agentFilter" placeholder="Filter by Agent ID or Status" oninput="filterAgents()">
-            </div>
-            <table class="table">
-                <tr><th>Agent ID</th><th>Status</th><th>Last Seen</th><th>IP</th></tr>
-                <tbody id="agentsTable"></tbody>
-            </table>
-        </div>
-        <div class="section">
-            <h2>Targets</h2>
-            <div class="filter">
-                <input type="text" id="targetFilter" placeholder="Filter by Target, Vulnerability, or Status" oninput="filterTargets()">
-            </div>
-            <table class="table">
-                <tr><th>Target</th><th>Vulnerability</th><th>Status</th><th>Score</th><th>Timestamp</th><th>Action</th></tr>
-                <tbody id="targetsTable"></tbody>
-            </table>
-        </div>
-        <div class="section">
-            <h2>Emergency Logs</h2>
-            <table class="table">
-                <tr><th>Agent ID</th><th>Action</th><th>Details</th><th>Timestamp</th></tr>
-                <tbody id="emergencyLogs"></tbody>
-            </table>
-        </div>
-        <div class="section">
-            <h2>Command Center</h2>
-            <div class="command-form">
-                <input type="text" id="token" placeholder="JWT Token">
-                <select id="agentId">
-                    <option value="">Select Agent</option>
-                </select>
-                <select id="action">
-                    <option value="scan_target">Scan Target</option>
-                    <option value="exploit_target">Exploit Target</option>
-                    <option value="block_ip">Block IP</option>
-                    <option value="send_honeypot">Send Honeypot</option>
-                    <option value="redirect_traffic">Redirect Traffic</option>
-                    <option value="spawn_agent">Spawn Agent</option>
-                    <option value="replicate">Replicate</option>
-                </select>
-                <input type="text" id="target" placeholder="Target (IP/Domain)">
-                <input type="text" id="params" placeholder="Params (JSON)">
-                <label><input type="checkbox" id="emergency"> Swarm Apocalypse Protocol</label>
-                <button onclick="sendCommand()">Execute</button>
-            </div>
-        </div>
-        <div class="section">
+        <div id="activity-log">
             <h2>Activity Log</h2>
-            <div class="log" id="activityLog"></div>
+            <ul id="log-list"></ul>
+        </div>
+        <div id="agents-table">
+            <h2>Agents</h2>
+            <table id="agents"></table>
+        </div>
+        <div id="targets-table">
+            <h2>Targets</h2>
+            <table id="targets"></table>
+        </div>
+        <div id="emergency-logs">
+            <h2>Emergency Logs</h2>
+            <ul id="emergency-list"></ul>
+        </div>
+        <div id="network-graph">
+            <h2>Network Map</h2>
+            <div id="network"></div>
+        </div>
+        <div id="threat-heatmap">
+            <h2>Threat Heatmap</h2>
+            <canvas id="heatmap"></canvas>
+        </div>
+        <div id="command-center">
+            <h2>Command Center</h2>
+            <select id="agent-select"></select>
+            <select id="action-select">
+                <option value="scan_target">Scan Target</option>
+                <option value="block_ip">Block IP</option>
+                <option value="send_honeypot">Send Honeypot</option>
+                <option value="redirect_traffic">Redirect Traffic</option>
+                <option value="spawn_agent">Spawn Agent</option>
+                <option value="replicate">Replicate</option>
+                <option value="exploit_target">Exploit Target</option>
+            </select>
+            <input type="text" id="target-input" placeholder="Target IP">
+            <button onclick="sendCommand()">Execute</button>
+            <label><input type="checkbox" id="emergency"> Emergency</label>
         </div>
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@latest/dist/vis-network.min.js"></script>
     <script src="/static/scripts.js"></script>
 </body>
 </html>
