@@ -1,5 +1,5 @@
 import paho.mqtt.client as mqtt
-from paho.mqtt.client import CallbackAPIVersion  # Added import
+from paho.mqtt.client import CallbackAPIVersion
 import json
 import time
 import uuid
@@ -12,10 +12,13 @@ import nmap
 import socket
 import threading
 from urllib.parse import urlparse
+import os
 
 # Konfigurasi agent
 AGENT_ID = str(uuid.uuid4())
-MQTT_BROKER = "broker.hivemq.com"
+MQTT_BROKER = os.getenv("MQTT_BROKER", "5374fec8494a4a24add8bb27fe4ddae5.s1.eu.hivemq.cloud:8883")
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "throng_user")  # Ganti dengan usernamemu
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "ThrongPass123!")  # Ganti dengan passwordmu
 TOPIC_REPORTS = "throng/reports"
 TOPIC_COMMANDS = f"throng/commands/{AGENT_ID}"
 TOPIC_PEER = "throng/peer"
@@ -23,14 +26,15 @@ TOPIC_SCANS = "throng/scans"
 TOPIC_EMERGENCY = "throng/emergency"
 
 # Callback saat terkoneksi
-def on_connect(client, userdata, flags, rc, properties=None):  # Updated signature for VERSION2
+def on_connect(client, userdata, flags, rc, properties=None):
     print(f"Agent {AGENT_ID} connected with code {rc}")
-    client.subscribe(TOPIC_COMMANDS)
-    client.subscribe(TOPIC_PEER)
-    client.subscribe(TOPIC_EMERGENCY)
+    if rc == 0:
+        client.subscribe(TOPIC_COMMANDS)
+        client.subscribe(TOPIC_PEER)
+        client.subscribe(TOPIC_EMERGENCY)
 
 # Callback saat menerima perintah
-def on_message(client, userdata, msg):  # Updated signature for VERSION2
+def on_message(client, userdata, msg):
     command = json.loads(msg.payload.decode())
     if command.get("agent_id") == AGENT_ID or msg.topic in [TOPIC_PEER, TOPIC_EMERGENCY]:
         action = command.get("action")
@@ -271,10 +275,12 @@ def log_action(action, target, emergency=False, details=""):
         f.write(f"{datetime.now().isoformat()} | Action: {action} | Target: {target} | Emergency: {emergency} | Details: {details}\n")
 
 # Inisialisasi MQTT client
-client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)  # Updated to VERSION2
+client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 client.on_connect = on_connect
 client.on_message = on_message
-client.connect(MQTT_BROKER, 1883, 60)
+client.tls_set()  # Aktifkan TLS untuk HiveMQ Cloud
+client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+client.connect(MQTT_BROKER.split(":")[0], int(MQTT_BROKER.split(":")[1]), 60)
 
 # Mulai pemindaian proaktif
 threading.Thread(target=proactive_scan, daemon=True).start()
