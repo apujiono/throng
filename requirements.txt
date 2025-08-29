@@ -1,11 +1,10 @@
 fastapi
-uvicorn
+uvicorn[standard]
+python-jose[cryptography]
 paho-mqtt
-psutil
 paramiko
 python-nmap
-pyjwt
 scikit-learn
-numpy>=1.21.6  # Versi minimal yang kompatibel dengan Python 3.11
+numpy>=1.21.6
 jinja2
 requests
