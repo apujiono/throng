@@ -212,7 +212,6 @@ async def get_dashboard_data():
         ]
     }
     
-    print(f"Returning data: {agents}, {reports}, {targets}")  # Debug log
     return {"agents": agents, "targets": targets, "reports": reports, "emergency_logs": emergency_logs, "network": network_data}
 
 # Endpoint untuk perintah
@@ -252,6 +251,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     while True:
         data = await websocket.receive_text()
+        print(f"Received WebSocket data: {data}")  # Debug log
         report = json.loads(data)
         agent_id = report.get("agent_id")
         report_data = report.get("data")
@@ -268,7 +268,6 @@ async def websocket_endpoint(websocket: WebSocket):
         conn.commit()
         conn.close()
 
-        print(f"Received report from {agent_id} with data: {report_data}")  # Debug log
         await websocket.send_text(f"Hive received report from {agent_id}")
 
 # Endpoint utama untuk render dashboard
