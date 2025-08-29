@@ -17,11 +17,16 @@ import paramiko
 import requests
 import uuid
 import threading
+import logging
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 security = HTTPBearer()
+
+# Logging setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Ambil konfigurasi dari variabel lingkungan dengan default
 JWT_SECRET = os.getenv("JWT_SECRET", "throng_default_secret_1234567890")
@@ -67,11 +72,11 @@ init_db()
 # MQTT client
 mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 def on_connect(client, userdata, flags, rc, properties=None):
-    print(f"MQTT connected with result code {rc}")
+    logger.info(f"MQTT connected with result code {rc}")
     if rc == 0:
-        client.subscribe("throng/#")  # Subscribe ke semua topik Throng
+        client.subscribe("throng/reports")  # Subscribe khusus ke laporan
 mqtt_client.on_connect = on_connect
-mqtt_client.tls_set()  # Aktifkan TLS untuk HiveMQ Cloud
+mqtt_client.tls_set()
 mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 mqtt_client.connect(MQTT_BROKER.split(":")[0], int(MQTT_BROKER.split(":")[1]), 60)
 time.sleep(1)
@@ -114,16 +119,16 @@ def spawn_agent_ssh(target, credentials):
                   (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(target), target))
         conn.commit()
         conn.close()
-        print(f"Spawned agent {new_agent_id} on {target}")
+        logger.info(f"Spawned agent {new_agent_id} on {target}")
         return new_agent_id
     except Exception as e:
-        print(f"Error spawning agent: {e}")
+        logger.error(f"Error spawning agent: {e}")
         return None
 
 # Fungsi spawn agent otomatis via Railway API
 def spawn_agent_railway():
     if not RAILWAY_API_TOKEN or not PROJECT_ID:
-        print("Railway API Token or Project ID not set")
+        logger.warning("Railway API Token or Project ID not set")
         return
     headers = {"Authorization": f"Bearer {RAILWAY_API_TOKEN}", "Content-Type": "application/json"}
     data = {
@@ -151,9 +156,9 @@ def spawn_agent_railway():
     }
     response = requests.post("https://backboard.railway.app/graphql/v2", headers=headers, json=data)
     if response.status_code == 200:
-        print("New agent spawned via Railway")
+        logger.info("New agent spawned via Railway")
     else:
-        print(f"Error spawning agent: {response.text}")
+        logger.error(f"Error spawning agent: {response.text}")
 
 # Pemantauan otomatis
 def auto_monitor():
@@ -164,11 +169,11 @@ def auto_monitor():
         reports = [json.loads(row[0]) for row in c.fetchall()]
         conn.close()
         anomalies = analyze_threats(reports)
-        if any(anomalies) or len(reports) < 3:  # Jika ada ancaman atau agent terlalu sedikit
+        if any(anomalies) or len(reports) < 3:
             target = os.getenv("DEFAULT_SPAWN_TARGET", "192.168.1.10")
             credentials = {"username": DEFAULT_SSH_USERNAME, "password": DEFAULT_SSH_PASSWORD}
-            spawn_agent_ssh(target, credentials)  # Spawn via SSH
-            if RAILWAY_API_TOKEN and PROJECT_ID:  # Spawn via Railway jika diatur
+            spawn_agent_ssh(target, credentials)
+            if RAILWAY_API_TOKEN and PROJECT_ID:
                 spawn_agent_railway()
         time.sleep(AUTO_SPAWN_INTERVAL)
 
@@ -250,25 +255,29 @@ async def send_command(command: Command):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     while True:
-        data = await websocket.receive_text()
-        print(f"Received WebSocket data: {data}")  # Debug log
-        report = json.loads(data)
-        agent_id = report.get("agent_id")
-        report_data = report.get("data")
+        try:
+            data = await websocket.receive_text()
+            logger.info(f"Received WebSocket data: {data}")
+            report = json.loads(data)
+            agent_id = report.get("agent_id")
+            report_data = report.get("data")
 
-        conn = sqlite3.connect("throng.db")
-        c = conn.cursor()
-        c.execute("INSERT INTO reports (agent_id, data) VALUES (?, ?)", (agent_id, json.dumps(report_data)))
-        c.execute("INSERT OR REPLACE INTO agents (agent_id, status, last_seen, ip) VALUES (?, ?, ?, ?)", 
-                  (agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), report_data.get("ip", "unknown")))
-        if "vulnerability" in report_data:
-            score = len(report_data.get("vulnerability", [])) * 0.2
-            c.execute("INSERT INTO targets (target, vulnerability, status, score) VALUES (?, ?, ?, ?)", 
-                      (report_data.get("target"), json.dumps(report_data.get("vulnerability")), "scanned", score))
-        conn.commit()
-        conn.close()
+            conn = sqlite3.connect("throng.db")
+            c = conn.cursor()
+            c.execute("INSERT INTO reports (agent_id, data) VALUES (?, ?)", (agent_id, json.dumps(report_data)))
+            c.execute("INSERT OR REPLACE INTO agents (agent_id, status, last_seen, ip) VALUES (?, ?, ?, ?)", 
+                      (agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), report_data.get("ip", "unknown")))
+            if "vulnerability" in report_data:
+                score = len(report_data.get("vulnerability", [])) * 0.2
+                c.execute("INSERT INTO targets (target, vulnerability, status, score) VALUES (?, ?, ?, ?)", 
+                          (report_data.get("target"), json.dumps(report_data.get("vulnerability")), "scanned", score))
+            conn.commit()
+            conn.close()
 
-        await websocket.send_text(f"Hive received report from {agent_id}")
+            await websocket.send_text(f"Hive received report from {agent_id}")
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+            await websocket.send_text(f"Error processing report: {e}")
 
 # Endpoint utama untuk render dashboard
 @app.get("/", response_class=HTMLResponse)
