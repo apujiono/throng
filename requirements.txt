@@ -1,6 +1,5 @@
 fastapi
 uvicorn[standard]
-python-jose[cryptography]
 paho-mqtt
 paramiko
 python-nmap
