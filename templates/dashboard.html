@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Throng Hive Overlord</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <h1>Throng Hive Overlord</h1>
+    <p class="tagline" id="tagline">The Swarm Devours All Threats.</p>
+    <div class="container">
+        <div class="section">
+            <h2>Network Map</h2>
+            <div class="network-container" id="network"></div>
+        </div>
+        <div class="section">
+            <h2>Threat Analysis</h2>
+            <div class="chart-container">
+                <canvas id="threatChart"></canvas>
+            </div>
+        </div>
+        <div class="section">
+            <h2>Network Traffic</h2>
+            <div class="chart-container">
+                <canvas id="trafficChart"></canvas>
+            </div>
+        </div>
+        <div class="section">
+            <h2>Agents</h2>
+            <div class="filter">
+                <input type="text" id="agentFilter" placeholder="Filter by Agent ID or Status" oninput="filterAgents()">
+            </div>
+            <table class="table">
+                <tr><th>Agent ID</th><th>Status</th><th>Last Seen</th><th>IP</th></tr>
+                <tbody id="agentsTable"></tbody>
+            </table>
+        </div>
+        <div class="section">
+            <h2>Targets</h2>
+            <div class="filter">
+                <input type="text" id="targetFilter" placeholder="Filter by Target, Vulnerability, or Status" oninput="filterTargets()">
+            </div>
+            <table class="table">
+                <tr><th>Target</th><th>Vulnerability</th><th>Status</th><th>Score</th><th>Timestamp</th><th>Action</th></tr>
+                <tbody id="targetsTable"></tbody>
+            </table>
+        </div>
+        <div class="section">
+            <h2>Emergency Logs</h2>
+            <table class="table">
+                <tr><th>Agent ID</th><th>Action</th><th>Details</th><th>Timestamp</th></tr>
+                <tbody id="emergencyLogs"></tbody>
+            </table>
+        </div>
+        <div class="section">
+            <h2>Command Center</h2>
+            <div class="command-form">
+                <input type="text" id="token" placeholder="JWT Token">
+                <select id="agentId">
+                    <option value="">Select Agent</option>
+                </select>
+                <select id="action">
+                    <option value="scan_target">Scan Target</option>
+                    <option value="exploit_target">Exploit Target</option>
+                    <option value="block_ip">Block IP</option>
+                    <option value="send_honeypot">Send Honeypot</option>
+                    <option value="redirect_traffic">Redirect Traffic</option>
+                    <option value="spawn_agent">Spawn Agent</option>
+                    <option value="replicate">Replicate</option>
+                </select>
+                <input type="text" id="target" placeholder="Target (IP/Domain)">
+                <input type="text" id="params" placeholder="Params (JSON)">
+                <label><input type="checkbox" id="emergency"> Swarm Apocalypse Protocol</label>
+                <button onclick="sendCommand()">Execute</button>
+            </div>
+        </div>
+        <div class="section">
+            <h2>Activity Log</h2>
+            <div class="log" id="activityLog"></div>
+        </div>
+    </div>
+    <script src="/static/scripts.js"></script>
+</body>
+</html>
