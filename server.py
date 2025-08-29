@@ -1,4 +1,4 @@
-# server.py - Throng Hive (No JWT, Simple & Stable)
+# server.py - Throng Hive (Fixed & Stable)
 
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse
@@ -17,14 +17,12 @@ import numpy as np
 import paramiko
 import requests
 import uuid
-import threading
 import logging
 import socket
 
 # ============ SETUP ============
 app = FastAPI()
 
-# Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -33,11 +31,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static & Templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -50,6 +46,29 @@ DEFAULT_SSH_USERNAME = os.getenv("DEFAULT_SSH_USERNAME", "admin")
 DEFAULT_SSH_PASSWORD = os.getenv("DEFAULT_SSH_PASSWORD", "admin")
 AUTO_SPAWN_INTERVAL = int(os.getenv("AUTO_SPAWN_INTERVAL", "300"))
 
+# ============ DB Helper ============
+def get_db():
+    conn = sqlite3.connect("throng.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db()
+    conn.execute('''CREATE TABLE IF NOT EXISTS reports 
+                 (id INTEGER PRIMARY KEY, agent_id TEXT, data TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS counterattacks 
+                 (id INTEGER PRIMARY KEY, agent_id TEXT, target TEXT, action TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS agents 
+                 (id INTEGER PRIMARY KEY, agent_id TEXT, status TEXT, last_seen DATETIME, ip TEXT, host TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS targets 
+                 (id INTEGER PRIMARY KEY, target TEXT, vulnerability TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, score REAL)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS emergency_logs 
+                 (id INTEGER PRIMARY KEY, agent_id TEXT, action TEXT, details TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
 # ============ MODEL PERINTAH ============
 class Command(BaseModel):
     agent_id: str
@@ -58,63 +77,60 @@ class Command(BaseModel):
     params: dict = {}
     emergency: bool = False
 
-# ============ DATABASE ============
-db_connection = sqlite3.connect("throng.db", check_same_thread=False)
-db_cursor = db_connection.cursor()
-
-def init_db():
-    db_cursor.execute('''CREATE TABLE IF NOT EXISTS reports 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, data TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    db_cursor.execute('''CREATE TABLE IF NOT EXISTS counterattacks 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, target TEXT, action TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    db_cursor.execute('''CREATE TABLE IF NOT EXISTS agents 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, status TEXT, last_seen DATETIME, ip TEXT, host TEXT)''')
-    db_cursor.execute('''CREATE TABLE IF NOT EXISTS targets 
-                 (id INTEGER PRIMARY KEY, target TEXT, vulnerability TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, score REAL)''')
-    db_cursor.execute('''CREATE TABLE IF NOT EXISTS emergency_logs 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, action TEXT, details TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    db_connection.commit()
-
-init_db()
-
 # ============ MQTT ============
 mqtt_client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION2)
 active_websockets = []
 
 def on_connect(client, userdata, flags, rc, properties=None):
-    logger.info(f"MQTT connected with result code {rc}")
     if rc == 0:
+        logger.info("MQTT connected successfully")
         client.subscribe("throng/reports")
+    else:
+        logger.error(f"MQTT connection failed with code {rc}")
 
 def on_message(client, userdata, msg):
     if msg.topic == "throng/reports":
         try:
             report = json.loads(msg.payload.decode())
             for ws in active_websockets:
-                ws.send_text(json.dumps({"type": "report", "data": report}))
+                asyncio.create_task(ws.send_text(json.dumps({"type": "report", "data": report})))
         except Exception as e:
-            logger.error(f"Error broadcasting report: {e}")
+            logger.error(f"Error: {e}")
 
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 mqtt_client.tls_set()
 mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 
-# Pisah host dan port
-broker_host = MQTT_BROKER.split(":")[0]
-broker_port = int(MQTT_BROKER.split(":")[1])
-mqtt_client.connect(broker_host, broker_port, 60)
-mqtt_client.loop_start()
+# Validasi MQTT_BROKER
+try:
+    broker_host = MQTT_BROKER.split(":")[0]
+    broker_port = int(MQTT_BROKER.split(":")[1])
+except Exception as e:
+    logger.error(f"Invalid MQTT_BROKER format: {MQTT_BROKER}")
+    broker_host = "localhost"
+    broker_port = 1883
+
+try:
+    mqtt_client.connect(broker_host, broker_port, 60)
+    mqtt_client.loop_start()
+except Exception as e:
+    logger.error(f"Failed to connect to MQTT: {e}")
 
 # ============ MODEL ANOMALI ============
 anomaly_model = IsolationForest(contamination=0.1, random_state=42)
 
 def analyze_threats(reports):
-    data = [[r["data"].get("network_traffic", 0), len(r["data"].get("vulnerability", []))] for r in reports]
-    if len(data) < 2:
-        return []
-    predictions = anomaly_model.fit_predict(np.array(data))
-    return [1 if pred == -1 else 0 for pred in predictions]
+    if len(reports) < 2:
+        return [0] * len(reports)
+    data = []
+    for r in reports:
+        traffic = r["data"].get("network_traffic", 0)
+        vuln_count = len(r["data"].get("vulnerability", []))
+        data.append([traffic, vuln_count])
+    X = np.array(data)
+    preds = anomaly_model.fit_predict(X)
+    return [bool(x == -1) for x in preds]
 
 # ============ ENDPOINTS ============
 
@@ -125,22 +141,33 @@ async def read_root(request: Request):
 
 @app.get("/api/data")
 async def get_dashboard_data():
-    db_cursor.execute("SELECT agent_id, status, last_seen, ip, host FROM agents WHERE status = 'active'")
-    agents = [{"agent_id": r[0], "status": r[1], "last_seen": r[2], "ip": r[3], "host": r[4]} for r in db_cursor.fetchall()]
+    conn = get_db()
+    cur = conn.cursor()
 
-    db_cursor.execute("SELECT target, vulnerability, status, timestamp, score FROM targets")
-    targets = [{"target": r[0], "vulnerability": json.loads(r[1]), "status": r[2], "timestamp": r[3], "score": r[4]} for r in db_cursor.fetchall()]
+    cur.execute("SELECT agent_id, status, last_seen, ip, host FROM agents WHERE status = 'active'")
+    agents = [dict(row) for row in cur.fetchall()]
 
-    db_cursor.execute("SELECT agent_id, data, timestamp FROM reports ORDER BY timestamp DESC LIMIT 100")
-    reports = [{"agent_id": r[0], "data": json.loads(r[1]), "timestamp": r[2]} for r in db_cursor.fetchall()]
+    cur.execute("SELECT target, vulnerability, status, timestamp, score FROM targets")
+    targets = [dict(row) for row in cur.fetchall()]
+    for t in targets:
+        t["vulnerability"] = json.loads(t["vulnerability"])
+
+    cur.execute("SELECT agent_id, data, timestamp FROM reports ORDER BY timestamp DESC LIMIT 100")
+    reports = [dict(row) for row in cur.fetchall()]
+    for r in reports:
+        r["data"] = json.loads(r["data"])
 
     anomalies = analyze_threats(reports)
     for i, r in enumerate(reports):
         if i < len(anomalies):
-            r["data"]["is_anomaly"] = bool(anomalies[i])
+            r["data"]["is_anomaly"] = anomalies[i]
 
-    db_cursor.execute("SELECT agent_id, action, details, timestamp FROM emergency_logs ORDER BY timestamp DESC LIMIT 100")
-    emergency_logs = [{"agent_id": r[0], "action": r[1], "details": json.loads(r[2]), "timestamp": r[3]} for r in db_cursor.fetchall()]
+    cur.execute("SELECT agent_id, action, details, timestamp FROM emergency_logs ORDER BY timestamp DESC LIMIT 100")
+    emergency_logs = [dict(row) for row in cur.fetchall()]
+    for e in emergency_logs:
+        e["details"] = json.loads(e["details"])
+
+    conn.close()
 
     return {
         "agents": agents,
@@ -155,19 +182,20 @@ async def send_command(command: Command):
     if command.action not in allowed:
         return {"status": "invalid action"}
 
-    # Simpan log
+    conn = get_db()
+    cur = conn.cursor()
     if command.target:
-        db_cursor.execute("INSERT INTO counterattacks (agent_id, target, action) VALUES (?, ?, ?)", 
-                          (command.agent_id, command.target, command.action))
+        cur.execute("INSERT INTO counterattacks (agent_id, target, action) VALUES (?, ?, ?)", 
+                    (command.agent_id, command.target, command.action))
         if command.emergency:
-            db_cursor.execute("INSERT INTO emergency_logs (agent_id, action, details) VALUES (?, ?, ?)", 
-                              (command.agent_id, command.action, json.dumps({"target": command.target, "params": command.params})))
-    db_connection.commit()
+            cur.execute("INSERT INTO emergency_logs (agent_id, action, details) VALUES (?, ?, ?)", 
+                        (command.agent_id, command.action, json.dumps({"target": command.target, "params": command.params})))
+    conn.commit()
+    conn.close()
 
-    # Kirim via MQTT
     mqtt_client.publish(f"throng/commands/{command.agent_id}", json.dumps(command.dict()))
     for ws in active_websockets:
-        ws.send_text(json.dumps({"type": "command", "data": command.dict()}))
+        asyncio.create_task(ws.send_text(json.dumps({"type": "command", "data": command.dict()})))
 
     return {"status": f"Command {command.action} sent"}
 
@@ -182,30 +210,35 @@ async def websocket_endpoint(websocket: WebSocket):
             agent_id = report.get("agent_id")
             report_data = report.get("data")
 
-            db_cursor.execute("INSERT INTO reports (agent_id, data) VALUES (?, ?)", (agent_id, json.dumps(report_data)))
-            db_cursor.execute("INSERT OR REPLACE INTO agents (agent_id, status, last_seen, ip) VALUES (?, ?, ?, ?)", 
-                              (agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), report_data.get("ip", "unknown")))
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute("INSERT INTO reports (agent_id, data) VALUES (?, ?)", (agent_id, json.dumps(report_data)))
+            cur.execute("INSERT OR REPLACE INTO agents (agent_id, status, last_seen, ip) VALUES (?, ?, ?, ?)", 
+                        (agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), report_data.get("ip", "unknown")))
             if "vulnerability" in report_data:
                 score = len(report_data.get("vulnerability", [])) * 0.2
-                db_cursor.execute("INSERT INTO targets (target, vulnerability, status, score) VALUES (?, ?, ?, ?)", 
-                                  (report_data.get("target"), json.dumps(report_data.get("vulnerability")), "scanned", score))
-            db_connection.commit()
-            logger.info(f"Agent {agent_id} reported. Data saved.")
+                cur.execute("INSERT INTO targets (target, vulnerability, status, score) VALUES (?, ?, ?, ?)", 
+                            (report_data.get("target"), json.dumps(report_data.get("vulnerability")), "scanned", score))
+            conn.commit()
+            conn.close()
+            logger.info(f"Saved report from {agent_id}")
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"WS error: {e}")
     finally:
         if websocket in active_websockets:
             active_websockets.remove(websocket)
 
-# ============ HEALTH CHECK ============
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
-# ============ CLEANUP ============
 import atexit
 @atexit.register
 def cleanup():
-    db_connection.close()
+    try:
+        db_conn = get_db()
+        db_conn.close()
+    except:
+        pass
     mqtt_client.loop_stop()
-    logger.info("Shutdown: DB and MQTT cleaned up.")
+    logger.info("Cleanup done.")
