@@ -18,11 +18,13 @@ function connectWebSocket() {
         return;
     }
     localStorage.setItem('throngToken', token);
+    document.getElementById('connectionStatus').textContent = 'Connecting...';
 
     if (ws) ws.close();
     ws = new WebSocket(`wss://${window.location.host}/ws`);
     ws.onopen = () => {
         ws.send(JSON.stringify({ token }));
+        document.getElementById('connectionStatus').textContent = 'Connected';
         showNotification('Connected to Hive WebSocket');
     };
     ws.onmessage = (event) => {
@@ -31,8 +33,14 @@ function connectWebSocket() {
         if (data.type === 'command') showNotification(`Command sent: ${data.data.action}`);
         if (data.type === 'update') updateAgentStatus(data.data.agent_id, data.data.status);
     };
-    ws.onerror = (error) => showNotification(`WebSocket error: ${error}`, 'error');
-    ws.onclose = () => showNotification('WebSocket disconnected', 'error');
+    ws.onerror = (error) => {
+        showNotification(`WebSocket error: ${error}`, 'error');
+        document.getElementById('connectionStatus').textContent = 'Disconnected';
+    };
+    ws.onclose = () => {
+        showNotification('WebSocket disconnected', 'error');
+        document.getElementById('connectionStatus').textContent = 'Disconnected';
+    };
 }
 
 function updateAgentStatus(agentId, status) {
@@ -45,6 +53,7 @@ function updateAgentStatus(agentId, status) {
             break;
         }
     }
+    updateCount('agents');
 }
 
 function updateReport(report) {
@@ -52,6 +61,7 @@ function updateReport(report) {
         row.cells[3].textContent = report.data.is_anomaly ? 'Yes' : 'No';
         row.cells[3].style.color = report.data.is_anomaly ? '#ff0000' : '#00ff00';
     });
+    updateCount('reports');
 }
 
 function updateTable(tableId, data, columns, customRender = null) {
@@ -82,6 +92,7 @@ function updateTable(tableId, data, columns, customRender = null) {
     });
 
     if (updated) filterTable(tableId);
+    updateCount(tableId.replace('Table', ''));
 }
 
 function filterTable(tableId) {
@@ -100,6 +111,7 @@ function filterTable(tableId) {
         }
         tr[i].style.display = found ? '' : 'none';
     }
+    updateCount(tableId.replace('Table', ''));
 }
 
 function sortTable(tableId, n) {
@@ -139,6 +151,7 @@ function sortTable(tableId, n) {
             switching = true;
         }
     }
+    updateCount(tableId.replace('Table', ''));
 }
 
 function sendCommand(agentId, action, target) {
@@ -171,12 +184,22 @@ function openTab(tabName) {
     document.querySelector(`[onclick="openTab('${tabName}')"]`).className += ' active';
 }
 
+function updateCount(tab) {
+    const table = document.getElementById(`${tab}Table`);
+    const count = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr').length;
+    document.getElementById(`${tab}Count`).textContent = count;
+}
+
 // Initial load
 document.addEventListener('DOMContentLoaded', () => {
     const savedToken = localStorage.getItem('throngToken');
     if (savedToken) {
         document.getElementById('tokenInput').value = savedToken;
     }
+    updateCount('agents');
+    updateCount('reports');
+    updateCount('targets');
+    updateCount('emergency');
 });
 
 document.getElementById('tokenInput').addEventListener('change', (e) => {
