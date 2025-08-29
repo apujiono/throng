@@ -159,3 +159,6 @@ async def websocket_endpoint(websocket: WebSocket):
         conn.close()
 
         await websocket.send_text(f"Hive received report from {agent_id}")
+@app.get("/")
+async def root():
+    return {"message": "Throng Hive is alive!"}
