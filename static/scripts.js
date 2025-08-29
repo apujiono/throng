@@ -1,119 +1,172 @@
-let token = null;
+let token = '';
 
-function loadData() {
-    const jwtToken = document.getElementById('jwt-token').value;
-    if (!jwtToken) {
-        alert('Please enter a JWT Token');
-        return;
-    }
-    token = jwtToken;
-    fetchData();
+function showNotification(message, type = 'info') {
+    const notification = document.getElementById('notifications');
+    notification.style.display = 'block';
+    notification.textContent = message;
+    notification.style.backgroundColor = type === 'error' ? '#dc3545' : '#28a745';
+    setTimeout(() => {
+        notification.style.display = 'none';
+    }, 5000);
 }
 
 function fetchData() {
+    token = document.getElementById('tokenInput').value;
+    if (!token) {
+        showNotification('Please enter a valid JWT token', 'error');
+        return;
+    }
+    updateData();
+}
+
+function updateData() {
     if (!token) return;
-    fetch('https://throng-production.up.railway.app/api/data', {
+
+    fetch('/api/data', {
         headers: { 'Authorization': `Bearer ${token}` }
     })
-    .then(response => response.json())
-    .then(data => updateDashboard(data))
-    .catch(error => console.error('Error fetching data:', error));
-}
-
-function updateDashboard(data) {
-    // Update Activity Log
-    const logList = document.getElementById('log-list');
-    logList.innerHTML = '';
-    data.reports.forEach(report => {
-        const li = document.createElement('li');
-        li.textContent = `${report.timestamp} | ${report.agent_id}: ${JSON.stringify(report.data)}`;
-        logList.appendChild(li);
-    });
-
-    // Update Agents Table
-    const agentsTable = document.getElementById('agents');
-    agentsTable.innerHTML = '<tr><th>ID</th><th>Status</th><th>Last Seen</th><th>IP</th></tr>';
-    data.agents.forEach(agent => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${agent.agent_id}</td><td>${agent.status}</td><td>${agent.last_seen}</td><td>${agent.ip}</td>`;
-        agentsTable.appendChild(tr);
-    });
-
-    // Update Targets Table
-    const targetsTable = document.getElementById('targets');
-    targetsTable.innerHTML = '<tr><th>Target</th><th>Vulnerabilities</th><th>Status</th><th>Score</th><th>Timestamp</th></tr>';
-    data.targets.forEach(target => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${target.target}</td><td>${JSON.stringify(target.vulnerability)}</td><td>${target.status}</td><td>${target.score}</td><td>${target.timestamp}</td>`;
-        targetsTable.appendChild(tr);
-    });
-
-    // Update Emergency Logs
-    const emergencyList = document.getElementById('emergency-list');
-    emergencyList.innerHTML = '';
-    data.emergency_logs.forEach(log => {
-        const li = document.createElement('li');
-        li.textContent = `${log.timestamp} | ${log.agent_id}: ${log.action} - ${JSON.stringify(log.details)}`;
-        emergencyList.appendChild(li);
-    });
-
-    // Update Network Graph
-    const network = new vis.Network(document.getElementById('network'), {
-        nodes: new vis.DataSet(data.network.nodes),
-        edges: new vis.DataSet(data.network.edges)
-    }, {});
-
-    // Update Threat Heatmap (Placeholder)
-    const ctx = document.getElementById('heatmap').getContext('2d');
-    new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: data.reports.map(r => r.agent_id),
-            datasets: [{
-                label: 'Network Traffic',
-                data: data.reports.map(r => r.data.network_traffic || 0),
-                backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                borderColor: 'rgba(75, 192, 192, 1)',
-                borderWidth: 1
-            }]
-        },
-        options: { scales: { y: { beginAtZero: true } } }
-    });
-
-    // Update Agent Select
-    const agentSelect = document.getElementById('agent-select');
-    agentSelect.innerHTML = '<option value="">Select Agent</option>';
-    data.agents.forEach(agent => {
-        const option = document.createElement('option');
-        option.value = agent.agent_id;
-        option.textContent = agent.agent_id;
-        agentSelect.appendChild(option);
+    .then(response => {
+        if (!response.ok) throw new Error('Unauthorized');
+        return response.json();
+    })
+    .then(data => {
+        updateTable('agentsTable', data.agents, ['agent_id', 'status', 'last_seen', 'ip', 'host'], (row, agent) => {
+            const actionsCell = row.insertCell(5);
+            const spawnButton = document.createElement('button');
+            spawnButton.textContent = 'Spawn';
+            spawnButton.onclick = () => sendCommand(agent.agent_id, 'spawn_agent', '192.168.1.10');
+            actionsCell.appendChild(spawnButton);
+        });
+        updateTable('reportsTable', data.reports, ['agent_id', 'timestamp', 'data.network_traffic', 'data.is_anomaly', 'data.ip'], (row, report) => {
+            row.cells[3].textContent = report.data.is_anomaly ? 'Yes' : 'No';
+        });
+        updateTable('targetsTable', data.targets, ['target', 'vulnerability', 'status', 'timestamp', 'score']);
+        updateTable('emergencyTable', data.emergency_logs, ['agent_id', 'action', 'details', 'timestamp'], (row, log) => {
+            row.cells[2].textContent = JSON.stringify(log.details);
+        });
+        showNotification('Data updated successfully');
+    })
+    .catch(error => {
+        showNotification(`Error fetching data: ${error.message}`, 'error');
+        console.error('Error:', error);
     });
 }
 
-function sendCommand() {
-    const agentId = document.getElementById('agent-select').value;
-    const action = document.getElementById('action-select').value;
-    const target = document.getElementById('target-input').value;
-    const emergency = document.getElementById('emergency').checked;
+function updateTable(tableId, data, columns, customRender = null) {
+    const table = document.getElementById(tableId);
+    const tbody = table.getElementsByTagName('tbody')[0];
+    tbody.innerHTML = '';
 
-    if (!agentId || !action) {
-        alert('Please select an agent and action');
+    data.forEach(item => {
+        const row = tbody.insertRow();
+        columns.forEach((col, index) => {
+            const cell = row.insertCell(index);
+            const value = col.split('.').reduce((obj, key) => obj ? obj[key] : '', item) || 'N/A';
+            cell.textContent = value;
+        });
+        if (customRender) customRender(row, item);
+    });
+}
+
+function filterTable(tableId) {
+    const input = document.getElementById(`${tableId.replace('Table', 'Filter')}`).value.toLowerCase();
+    const table = document.getElementById(tableId);
+    const tr = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+
+    for (let i = 0; i < tr.length; i++) {
+        let found = false;
+        const td = tr[i].getElementsByTagName('td');
+        for (let j = 0; j < td.length; j++) {
+            if (td[j].textContent.toLowerCase().indexOf(input) > -1) {
+                found = true;
+                break;
+            }
+        }
+        tr[i].style.display = found ? '' : 'none';
+    }
+}
+
+function sortTable(tableId, n) {
+    const table = document.getElementById(tableId);
+    let rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+    switching = true;
+    dir = 'asc';
+
+    while (switching) {
+        switching = false;
+        rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+
+        for (i = 0; i < (rows.length - 1); i++) {
+            shouldSwitch = false;
+            x = rows[i].getElementsByTagName('td')[n];
+            y = rows[i + 1].getElementsByTagName('td')[n];
+
+            if (dir === 'asc') {
+                if (x.textContent.toLowerCase() > y.textContent.toLowerCase()) {
+                    shouldSwitch = true;
+                    break;
+                }
+            } else if (dir === 'desc') {
+                if (x.textContent.toLowerCase() < y.textContent.toLowerCase()) {
+                    shouldSwitch = true;
+                    break;
+                }
+            }
+        }
+
+        if (shouldSwitch) {
+            rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+            switching = true;
+            switchcount++;
+        } else if (switchcount === 0 && dir === 'asc') {
+            dir = 'desc';
+            switching = true;
+        }
+    }
+}
+
+function sendCommand(agentId, action, target) {
+    if (!token) {
+        showNotification('Please enter a valid JWT token first', 'error');
         return;
     }
 
-    fetch('https://throng-production.up.railway.app/command', {
+    fetch('/command', {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ agent_id: agentId, action, target, emergency })
+        body: JSON.stringify({ agent_id: agentId, action: action, target: target })
     })
     .then(response => response.json())
-    .then(data => alert(data.status))
-    .catch(error => console.error('Error sending command:', error));
+    .then(data => showNotification(data.status))
+    .catch(error => showNotification(`Error sending command: ${error.message}`, 'error'));
 }
 
-// Load data on page load if token is set
-if (token) fetchData();
+function openTab(tabName) {
+    const tabs = document.getElementsByClassName('tab');
+    const tabContents = document.getElementsByClassName('tab-content');
+    for (let i = 0; i < tabs.length; i++) {
+        tabs[i].className = tabs[i].className.replace(' active', '');
+        tabContents[i].className = tabContents[i].className.replace(' active', '');
+    }
+    document.getElementById(tabName).className += ' active';
+    document.querySelector(`[onclick="openTab('${tabName}')"]`).className += ' active';
+}
+
+// Auto-refresh every 30 seconds
+setInterval(updateData, 30000);
+
+// Initial load
+document.addEventListener('DOMContentLoaded', () => {
+    const savedToken = localStorage.getItem('throngToken');
+    if (savedToken) {
+        document.getElementById('tokenInput').value = savedToken;
+        fetchData();
+    }
+});
+
+document.getElementById('tokenInput').addEventListener('change', (e) => {
+    localStorage.setItem('throngToken', e.target.value);
+});
