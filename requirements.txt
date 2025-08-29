@@ -6,6 +6,6 @@ paramiko
 python-nmap
 pyjwt
 scikit-learn
-numpy
-chart.js
+numpy>=1.21.6  # Versi minimal yang kompatibel dengan Python 3.11
 jinja2
+requests
