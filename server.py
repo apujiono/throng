@@ -71,25 +71,12 @@ init_db()
 
 # MQTT client
 mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-active_websockets = []
-
 def on_connect(client, userdata, flags, rc, properties=None):
     logger.info(f"MQTT connected with result code {rc}")
     if rc == 0:
-        client.subscribe("throng/reports")
-
-def on_message(client, userdata, msg):
-    if msg.topic == "throng/reports":
-        report = json.loads(msg.payload.decode())
-        for ws in active_websockets:
-            try:
-                ws.send_text(json.dumps({"type": "report", "data": report}))
-            except:
-                active_websockets.remove(ws)
-
+        client.subscribe("throng/#")  # Subscribe ke semua topik Throng
 mqtt_client.on_connect = on_connect
-mqtt_client.on_message = on_message
-mqtt_client.tls_set()
+mqtt_client.tls_set()  # Aktifkan TLS untuk HiveMQ Cloud
 mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 mqtt_client.connect(MQTT_BROKER.split(":")[0], int(MQTT_BROKER.split(":")[1]), 60)
 time.sleep(1)
@@ -288,7 +275,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 c.execute("INSERT INTO targets (target, vulnerability, status, score) VALUES (?, ?, ?, ?)", 
                           (report_data.get("target"), json.dumps(report_data.get("vulnerability")), "scanned", score))
             conn.commit()
-            logger.info(f"Database state - Agents: {c.execute('SELECT COUNT(*) FROM agents').fetchone()[0]}, Reports: {c.execute('SELECT COUNT(*) FROM reports').fetchone()[0]}")
             conn.close()
 
             await websocket.send_text(json.dumps({"type": "update", "data": {"agent_id": agent_id, "status": "active"}}))
@@ -300,5 +286,4 @@ async def websocket_endpoint(websocket: WebSocket):
 # Endpoint utama untuk render dashboard
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
-    logger.info("Rendering dashboard.html")
     return templates.TemplateResponse("dashboard.html", {"request": request})
