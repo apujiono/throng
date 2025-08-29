@@ -7,4 +7,5 @@ python-nmap
 pyjwt
 scikit-learn
 numpy
+chart.js
 jinja2
