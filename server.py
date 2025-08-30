@@ -1,19 +1,22 @@
-from fastapi import FastAPI, WebSocket
-import sqlite3
-import json
-import time
 import os
+import sys
+import logging
+import paramiko
 import paho.mqtt.client as mqtt
-from paho.mqtt.client import CallbackAPIVersion
+import psutil
+import requests
+import sqlite3
+import uuid
+from fastapi import FastAPI, WebSocket
+from datetime import datetime
+from collections import deque
 import threading
 import socket
-from collections import deque
-import random
-import requests
-from datetime import datetime
+import asyncio
+import websockets
 
 app = FastAPI()
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO)  # Diimpor dan dikonfigurasi dengan benar
 logger = logging.getLogger(__name__)
 
 # Konfigurasi
@@ -103,7 +106,7 @@ def spawn_agent_ssh(target, credentials):
         logger.error(f"Error spawning agent: {e}")
         return None
 
-# Analisis ancaman (dari ORB dengan penyesuaian)
+# Analisis ancaman
 def analyze_threat(report_data):
     traffic = report_data.get("network_traffic", 0)
     suspicious = report_data.get("suspicious_activity", False)
@@ -145,7 +148,7 @@ def handle_command(command):
             mqtt_client.publish("throng/emergency", json.dumps(command))
     logger.info(f"Handled command: {action} for {agent_id} on {target}")
 
-# Deadman Switch (dari ORB)
+# Deadman Switch
 last_activity = time.time()
 deadman_active = False
 
@@ -164,7 +167,7 @@ def deadman_check():
 
 threading.Thread(target=deadman_check, daemon=True).start()
 
-# Temporal Analysis (dari ORB)
+# Temporal Analysis
 def temporal_analysis():
     conn = sqlite3.connect("throng.db")
     cursor = conn.cursor()
@@ -184,7 +187,7 @@ def temporal_analysis():
 
 threading.Timer(60, temporal_analysis).start()
 
-# AI Communication with Taunts (dari ORB)
+# AI Communication with Taunts
 TAUNTS = [
     "Orb: Ada yang ngacau... Mau kita jebak?",
     "Orb: Traffic tinggi? Anak SMP juga bisa DDoS.",
@@ -202,7 +205,7 @@ def ai_send(message, level="info"):
     mqtt_client.publish("throng/ai/chat", json.dumps(msg))
     print(f"[AI] {msg['timestamp']} - {msg['message']} (Level: {msg['level']}")
 
-# Notifikasi WhatsApp (dari SkyNet, opsional)
+# Notifikasi WhatsApp
 def send_whatsapp_notification(threat_data, config, timestamp):
     if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER, WHATSAPP_NUMBER]):
         logger.warning("WhatsApp config incomplete, skipping notification")
@@ -327,14 +330,11 @@ def execute_command(cmd):
 @app.get("/")
 async def cli_interface():
     logger.info("Starting CLI interface")
-    return PlainTextResponse("Run 'python -m cli_client' to start Throng Hive CLI")
+    return PlainTextResponse("Run 'python -m src.server' to start Throng Hive CLI")
 
 # Client CLI
-import asyncio
-import websockets
-
 async def run_cli():
-    uri = "ws://localhost:8000/ws"  # Ganti dengan URL Railway saat deploy
+    uri = os.getenv("WEBSOCKET_URI", "ws://localhost:8000/ws")  # Dapat dari env untuk Railway
     async with websockets.connect(uri) as websocket:
         print("=== Throng Hive Terminal ===")
         print("Type 'help' for commands. Use 'exit' to quit.")
