@@ -1,9 +1,7 @@
 fastapi
-uvicorn[standard]
+uvicorn
+websockets
 paho-mqtt
 paramiko
-python-nmap
-scikit-learn
-numpy>=1.21.6
-jinja2
+psutil
 requests
