@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Throng Hive</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>Welcome to Throng Hive</h1>
+    <p>This is a monitoring system for agents.</p>
+    <h2>Recent Reports</h2>
+    <ul>
+        {% for report in reports %}
+            <li>{{ report.agent_id }} - Traffic: {{ report.data.traffic }} @ {{ report.data.timestamp }}</li>
+        {% endfor %}
+    </ul>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
