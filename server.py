@@ -1,15 +1,12 @@
 import os
 import logging
 import sqlite3
-from fastapi import FastAPI, WebSocket
-from fastapi.responses import HTMLResponse
-from collections import deque
+from flask import Flask, render_template
 import paho.mqtt.client as mqtt
 import threading
 import socket
-import uvicorn
 
-app = FastAPI()
+app = Flask(__name__, static_folder='static', template_folder='templates')
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -43,12 +40,12 @@ def init_db():
 init_db()
 
 # Log historis
-report_history = deque(maxlen=HISTORY_SIZE)
-action_history = deque(maxlen=HISTORY_SIZE)
+report_history = []
+action_history = []
 
 # MQTT
 mqtt_client = mqtt.Client()
-active_websockets = []
+active_reports = []
 
 def on_connect(client, userdata, flags, rc):
     logger.info(f"MQTT connected with result code {rc}")
@@ -59,9 +56,11 @@ def on_connect(client, userdata, flags, rc):
 def on_message(client, userdata, msg):
     if msg.topic.startswith("throng/reports"):
         report = eval(msg.payload.decode())  # Sederhana, ganti dengan json.loads jika perlu
+        active_reports.append(report)
         report_history.append(report)
-        for ws in active_websockets:
-            ws.send_text(str({"type": "report", "data": report}))
+        if len(report_history) > HISTORY_SIZE:
+            report_history.pop(0)
+        logger.info(f"Received report: {report}")
 
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
@@ -96,40 +95,14 @@ def handle_command(command):
             cursor.execute("INSERT INTO actions (agent_id, action, target, status) VALUES (?, ?, ?, ?)", 
                            (agent_id, action, target, "failed"))
         db.commit()
+        action_history.append({"agent_id": agent_id, "action": action, "target": target, "status": "success" if new_agent_id else "failed"})
+        if len(action_history) > HISTORY_SIZE:
+            action_history.pop(0)
 
 # Endpoint HTTP default
-@app.get("/", response_class=HTMLResponse)
-async def read_root():
-    html_content = """
-    <html>
-        <head><title>Throng Hive</title></head>
-        <body>
-            <h1>Welcome to Throng Hive</h1>
-            <p>This is a CLI-based agent monitoring system.</p>
-            <p>To use the CLI, connect to the WebSocket endpoint: <code>/ws</code> using a WebSocket client.</p>
-            <p>Supported commands: <code>{"agent_id": "test", "action": "spawn", "target": "192.168.1.10"}</code></p>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
-
-# WebSocket untuk CLI
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    active_websockets.append(websocket)
-    logger.info("CLI connected via WebSocket")
-    print("=== Throng Hive Terminal ===")
-    print("Type 'help' for commands. Use 'exit' to quit.")
-
-    while True:
-        try:
-            data = await websocket.receive_text()
-            command = eval(data)  # Sederhana, ganti dengan json.loads jika perlu
-            handle_command(command)
-            print(f"Command executed: {command}")
-        except Exception as e:
-            logger.error(f"WebSocket error: {e}")
+@app.route('/')
+def index():
+    return render_template('index.html', reports=active_reports)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=8000)
