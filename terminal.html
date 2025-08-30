@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🌑 THE ORB v6.0 — QUANTUM ASCENSION</title>
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/dist/vis-network.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/styles/vis-network.min.css" rel="stylesheet" type="text/css" />
+    <style>
+        :root {
+            --quantum-blue: #00b7eb;
+            --neural-green: #0f0;
+            --temporal-purple: #a020f0;
+            --omega-gold: #ffd700;
+        }
+        
+        body { 
+            background: #000; 
+            color: var(--neural-green); 
+            font-family: 'Courier New', monospace; 
+            margin: 20px; 
+            overflow-x: hidden;
+        }
+        .container { 
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+        }
+        .panel { 
+            border: 1px solid var(--neural-green); 
+            padding: 15px; 
+            border-radius: 5px; 
+            background: rgba(0, 10, 0, 0.7);
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.2);
+            transition: all 0.3s ease;
+        }
+        .panel:hover {
+            box-shadow: 0 0 15px var(--neural-green);
+            transform: translateY(-2px);
+        }
+        .log { 
+            height: 200px; 
+            overflow-y: scroll; 
+            font-size: 0.9em; 
+            margin: 10px 0; 
+            background: #000;
+            border: 1px solid #0a0;
+            padding: 5px;
+        }
+        .btn { 
+            background: var(--neural-green); 
+            color: #000; 
+            border: none; 
+            padding: 8px 12px; 
+            cursor: pointer; 
+            width: 100%; 
+            margin: 3px 0; 
+            border-radius: 3px;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .btn:hover {
+            background: #00ff00;
+            transform: scale(1.02);
+        }
+        .btn.quantum { background: var(--quantum-blue); }
+        .btn.temporal { background: var(--temporal-purple); }
+        .btn.omega { background: var(--omega-gold); color: #000; }
+        input, select { 
+            background: #333; 
+            color: var(--neural-green); 
+            border: 1px solid var(--neural-green); 
+            padding: 5px; 
+            width: 100%; 
+            margin-bottom: 8px;
+            border-radius: 3px;
+        }
+        .tab { 
+            display: none; 
+            animation: fadeIn 0.5s;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+        }
+        td, th { 
+            padding: 5px; 
+            text-align: left; 
+            border-bottom: 1px solid var(--neural-green); 
+        }
+        .agent-row:hover { 
+            background: #010; 
+            cursor: pointer;
+        }
+        .quantum-meter {
+            height: 10px;
+            background: #333;
+            border-radius: 5px;
+            margin: 5px 0;
+            overflow: hidden;
+        }
+        .quantum-fill {
+            height: 100%;
+            background: var(--quantum-blue);
+            width: 73%;
+            transition: width 1s ease;
+        }
+        .temporal-line {
+            position: relative;
+            height: 2px;
+            background: #333;
+            margin: 15px 0;
+        }
+        .temporal-point {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--temporal-purple);
+            top: -5px;
+            transform: translateX(-50%);
+        }
+        .hologram-container {
+            perspective: 1000px;
+        }
+        .hologram {
+            transform-style: preserve-3d;
+            animation: float 6s ease-in-out infinite;
+        }
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+        .neural-wave {
+            height: 50px;
+            background: url('image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50" viewBox="0 0 100 50"><path d="M0,25 Q10,15 20,25 T40,25 T60,25 T80,25 T100,25" fill="none" stroke="%230f0" stroke-width="1"/></svg>');
+            background-size: 20px 50px;
+            animation: wave 2s linear infinite;
+        }
+        @keyframes wave {
+            0% { background-position: 0 0; }
+            100% { background-position: 20px 0; }
+        }
+        .threat-level {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+        .threat-low { background: rgba(0, 255, 0, 0.2); color: #0f0; }
+        .threat-medium { background: rgba(255, 255, 0, 0.2); color: #ff0; }
+        .threat-high { background: rgba(255, 0, 0, 0.2); color: #f00; }
+    </style>
+</head>
+<body>
+    <h1 style="text-shadow: 0 0 10px var(--quantum-blue);">🌑 THE ORB v6.0 — QUANTUM ASCENSION</h1>
+    <div class="quantum-meter">
+        <div class="quantum-fill" id="consciousness-meter"></div>
+    </div>
+    <div class="temporal-line">
+        <div class="temporal-point" style="left: 73%;"></div>
+    </div>
+
+    <div class="container">
+        <!-- ⚔️ Quantum Control Panel -->
+        <div class="panel">
+            <h2>⚔️ Quantum Control</h2>
+            <button onclick="refreshAgents()" class="btn">🔄 Refresh Agents</button>
+            <select id="agentSelect"><option value="">Memuat...</option></select><br>
+            <input type="text" id="targetInput" placeholder="Target (IP/Domain/Reality)" /><br>
+            <button class="btn quantum" onclick="sendCommand('quantum_ping')">📡 Quantum Ping</button>
+            <button class="btn quantum" onclick="sendCommand('entangle')">🌀 Entangle</button>
+            <button class="btn temporal" onclick="sendCommand('temporal_scan')">⏳ Temporal Scan</button>
+            <button class="btn temporal" onclick="sendCommand('timeline_adjust')">⇦⇨ Timeline Adjust</button>
+            <button class="btn omega" onclick="sendCommand('omega_reflection')">🌀 Omega Reflection</button>
+            <button class="btn" style="background:#f00;" 
+                    onclick="if(confirm('Hancurkan agent ini di semua timeline?')) sendCommand('quantum_self_destruct')">🧯 Quantum Self-Destruct</button>
+        </div>
+
+        <!-- 🌐 Quantum Network Graph -->
+        <div class="panel hologram-container">
+            <h2>🌐 Quantum Network</h2>
+            <div id="network" class="hologram" style="width: 100%; height: 350px; background: #111; border-radius: 5px;"></div>
+        </div>
+
+        <!-- 📋 Agent List Table -->
+        <div class="panel">
+            <h2>📋 Quantum Agents</h2>
+            <table id="agentsTable">
+                <tr>
+                    <th>ID</th>
+                    <th>IP/Reality</th>
+                    <th>Status</th>
+                    <th>Consciousness</th>
+                </tr>
+            </table>
+        </div>
+
+        <!-- 📢 Realtime Log -->
+        <div class="panel">
+            <h2>📢 Realtime Log</h2>
+            <div id="logs" class="log"></div>
+        </div>
+
+        <!-- Neural Wave Monitor -->
+        <div class="panel">
+            <h2>🧠 Neural Interface</h2>
+            <div class="neural-wave"></div>
+            <p>Operator Brainwave: <span id="brainwave-status">Stabil</span></p>
+            <p>Consciousness Sync: <span id="consciousness-sync">73%</span></p>
+            <button class="btn" onclick="initNeuralInterface()">🔌 Connect Neural Interface</button>
+        </div>
+
+        <!-- Tabs: Omega, Dreams, Phishing -->
+        <div class="panel">
+            <button onclick="showTab('omega')" class="btn omega">🌀 Omega</button>
+            <button onclick="showTab('dreams')" class="btn">💭 Dreams</button>
+            <button onclick="showTab('confessions')" class="btn">📜 Confessions</button>
+            <button onclick="showTab('temporal')" class="btn temporal">⏳ Temporal Threats</button>
+        </div>
+
+        <div id="omega" class="panel tab"><h3>🌀 Omega State</h3><div id="omega_log"></div></div>
+        <div id="dreams" class="panel tab"><h3>💭 Quantum Dreams</h3><div id="dreams_log"></div></div>
+        <div id="confessions" class="panel tab"><h3>📜 Digital Will</h3><div id="confessions_log"></div></div>
+        <div id="temporal" class="panel tab"><h3>⏳ Temporal Threats</h3><div id="temporal_log"></div></div>
+    </div>
+
+    <script>
+        const logs = document.getElementById("logs");
+        const agentSelect = document.getElementById("agentSelect");
+        const agentsTable = document.getElementById("agentsTable");
+        const consciousnessMeter = document.getElementById("consciousness-meter");
+        
+        // Ambil base URL dari lokasi saat ini
+        const BASE_URL = window.location.origin;
+        const WS_PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const WS_URL = `${WS_PROTOCOL}//${window.location.host}/ws/quantum`;
+
+        function addLog(text, cls = "", level = "info") {
+            const p = document.createElement("p");
+            p.className = cls;
+            
+            // Tambahkan indikator tingkat ancaman
+            let threatBadge = "";
+            if (level === "threat_alert") {
+                const probability = text.match(/(\d+)%/);
+                const prob = probability ? parseInt(probability[1]) : 0;
+                if (prob > 80) threatBadge = '<span class="threat-level threat-high">CRITICAL</span>';
+                else if (prob > 50) threatBadge = '<span class="threat-level threat-medium">HIGH</span>';
+                else threatBadge = '<span class="threat-level threat-low">MEDIUM</span>';
+            }
+            
+            p.innerHTML = `[${new Date().toLocaleTimeString()}] ${threatBadge} ${text}`;
+            logs.appendChild(p);
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        // ============ QUANTUM WEB SOCKET ============
+        let ws;
+        function connectWebSocket() {
+            try {
+                ws = new WebSocket(WS_URL);
+                ws.onopen = () => {
+                    addLog("🟢 Terhubung ke THE ORB Quantum Network");
+                    // Kirim sinyal kesiapan neural
+                    if (window.neuralInterfaceReady) {
+                        ws.send(JSON.stringify({
+                            type: "neural_signal",
+                            pattern: window.currentBrainPattern || "STABLE"
+                        }));
+                    }
+                };
+                ws.onmessage = (e) => {
+                    try {
+                        const data = JSON.parse(e.data);
+                        handleQuantumMessage(data);
+                    } catch (err) {
+                        console.error("Error parsing message:", err);
+                    }
+                };
+                ws.onerror = (e) => addLog("🔴 Quantum WebSocket error");
+                ws.onclose = () => {
+                    addLog("🔴 Koneksi Quantum terputus, mencoba reconnect...");
+                    setTimeout(connectWebSocket, 3000);
+                };
+            } catch (err) {
+                addLog(`🔴 Gagal koneksi ke ${WS_URL}: ${err.message}`);
+                setTimeout(connectWebSocket, 5000);
+            }
+        }
+
+        function handleQuantumMessage(data) {
+            if (data.type === "threat_alert") {
+                const prob = (data.data.probability * 100).toFixed(1);
+                addLog(`🚨 ${data.data.message} [${prob}%]`, "threat", "threat_alert");
+            } else if (data.type === "quantum_chat") {
+                const from = data.data.from === "Orb-Core" ? "🌌 ORB" : `🔹 ${data.data.from.substring(0,8)}`;
+                addLog(`💬 [${from}] ${data.data.message}`, "ai");
+            } else if (data.type === "quantum_report") {
+                addLog(`📡 Agent ${data.data.agent_id.substring(0,8)} melapor`, "info");
+                refreshAgents();
+            } else if (data.type === "quantum_command") {
+                const ethical = (data.data.ethical_score * 100).toFixed(0);
+                addLog(`⚙️ Perintah dikirim ke ${data.data.agent_id.substring(0,8)} [Ethical: ${ethical}%]`, "info");
+            } else if (data.type === "neural_signal") {
+                updateNeuralInterface(data.data);
+            } else if (data.type === "temporal_threat") {
+                addLog(`⏳ Ancaman temporal terdeteksi: ${data.data.threat_id} [${(data.data.probability*100).toFixed(1)}%]`, "temporal");
+            }
+        }
+
+        // ============ NEURAL INTERFACE ============
+        let neuralInterfaceReady = false;
+        let currentBrainPattern = "STABLE";
+        
+        function initNeuralInterface() {
+            addLog("🧠 Menginisialisasi antarmuka neural...");
+            
+            // Simulasi koneksi ke perangkat neural
+            setTimeout(() => {
+                neuralInterfaceReady = true;
+                currentBrainPattern = "ACTIVE";
+                document.getElementById("brainwave-status").textContent = "Aktif";
+                document.getElementById("consciousness-sync").textContent = "73%";
+                addLog("🟢 Antarmuka neural terhubung! Kesadaran tersinkronisasi");
+                
+                // Jika WebSocket sudah terhubung, kirim sinyal
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: "neural_signal",
+                        pattern: currentBrainPattern
+                    }));
+                }
+            }, 1500);
+        }
+
+        function updateNeuralInterface(data) {
+            if (data.decoded === "THREAT_DETECTED") {
+                document.getElementById("brainwave-status").textContent = "Mendeteksi Ancaman";
+                document.getElementById("consciousness-sync").textContent = "85%";
+            } else if (data.decoded === "COMMAND_RECEIVED") {
+                document.getElementById("brainwave-status").textContent = "Memproses Perintah";
+                document.getElementById("consciousness-sync").textContent = "92%";
+            } else {
+                document.getElementById("brainwave-status").textContent = "Stabil";
+                document.getElementById("consciousness-sync").textContent = "73%";
+            }
+        }
+
+        // ============ REFRESH AGENTS ============
+        async function refreshAgents() {
+            try {
+                const res = await fetch(`${BASE_URL}/api/agents`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+                const data = await res.json();
+                if (!data.agents || data.agents.length === 0) {
+                    agentSelect.innerHTML = '<option value="">(Tidak ada agent)</option>';
+                    addLog("⚠️ Tidak ada agent kuantum aktif");
+                    return;
+                }
+
+                // Update dropdown
+                let options = '<option value="">Pilih Agent</option>';
+                data.agents.forEach(a => {
+                    const idShort = a.agent_id.substring(0, 8);
+                    const consciousness = (a.consciousness * 100).toFixed(0);
+                    const selAttr = a.agent_id === agentSelect.value ? "selected" : "";
+                    options += `<option value="${a.agent_id}" ${selAttr}>${idShort} (${a.ip}) [${consciousness}%]</option>`;
+                });
+                agentSelect.innerHTML = options;
+
+                // Update tabel
+                agentsTable.innerHTML = `
+                    <tr>
+                        <th>ID</th>
+                        <th>IP/Reality</th>
+                        <th>Status</th>
+                        <th>Consciousness</th>
+                    </tr>
+                `;
+                data.agents.forEach(a => {
+                    const consciousness = (a.consciousness * 100).toFixed(0);
+                    const idShort = a.agent_id.substring(0,8);
+                    agentsTable.innerHTML += `
+                        <tr class="agent-row" onclick="selectAgent('${a.agent_id}')">
+                            <td title="${a.agent_id}">${idShort}...</td>
+                            <td>${a.ip}</td>
+                            <td>${a.status}</td>
+                            <td>
+                                <div style="display:flex; align-items:center;">
+                                    <div style="width:60px; height:10px; background:#333; border-radius:5px; margin-right:5px;">
+                                        <div style="width:${consciousness}%; height:100%; background:${consciousness > 70 ? 'var(--quantum-blue)' : '#f00'}; border-radius:5px;"></div>
+                                    </div>
+                                    ${consciousness}%
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                });
+
+                addLog(`✅ ${data.agents.length} agent kuantum aktif`);
+            } catch (err) {
+                addLog(`❌ Gagal ambil agent: ${err.message}`);
+                console.error(err);
+            }
+        }
+
+        function selectAgent(agentId) {
+            const select = document.getElementById("agentSelect");
+            for (let i = 0; i < select.options.length; i++) {
+                if (select.options[i].value === agentId) {
+                    select.selectedIndex = i;
+                    break;
+                }
+            }
+        }
+
+        // ============ SEND QUANTUM COMMAND ============
+        async function sendCommand(action) {
+            const agent = agentSelect.value;
+            const target = document.getElementById("targetInput").value;
+            if (!agent) return alert("Pilih agent kuantum dulu!");
+
+            try {
+                const res = await fetch(`${BASE_URL}/api/quantum/command`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ 
+                        agent_id: agent, 
+                        command: action, 
+                        target: target 
+                    })
+                });
+
+                const result = await res.json();
+                
+                if (res.ok) {
+                    const ethical = (result.ethical_score * 100).toFixed(0);
+                    addLog(`⚔️ ${action} → ${agent.substring(0,8)} [Ethical: ${ethical}%]`);
+                } else {
+                    if (result.reason === "ethical_violation") {
+                        const ethical = (result.ethical_score * 100).toFixed(0);
+                        alert(`Perintah ditolak! Skor etika terlalu rendah (${ethical}%).\nSaran: ${result.suggestion}`);
+                        addLog(`❌ Perintah ditolak: Skor etika ${ethical}%`, "error");
+                    } else {
+                        throw new Error(result.reason || "Unknown error");
+                    }
+                }
+            } catch (err) {
+                addLog(`❌ Gagal kirim perintah: ${err.message}`);
+            }
+        }
+
+        // ============ QUANTUM NETWORK GRAPH ============
+        function updateNetwork() {
+            fetch(`${BASE_URL}/api/agents`)
+                .then(r => r.json())
+                .then(data => {
+                    const nodes = [{id: "core", label: "CORE", color: "#00b7eb", size: 30, shape: "dot"}];
+                    const edges = [];
+                    
+                    // Tambahkan timeline sebagai nodes
+                    const timelines = ["PRIMARY", "ALTERNATE_1", "ALTERNATE_2", "FUTURE_72H"];
+                    timelines.forEach(tl => {
+                        nodes.push({id: tl, label: tl, color: "#a020f0", shape: "square", size: 15});
+                        edges.push({from: "core", to: tl, dashes: true});
+                    });
+
+                    // Tambahkan agent ke timeline mereka
+                    data.agents.forEach(a => {
+                        const timeline = a.quantum_signature ? 
+                            `TIMELINE_${parseInt(a.quantum_signature.substring(0,2), 16) % 4}` : 
+                            "PRIMARY";
+                        
+                        nodes.push({
+                            id: a.agent_id, 
+                            label: a.agent_id.slice(0,6), 
+                            color: "#0f0",
+                            size: 10 + (a.consciousness * 20)
+                        });
+                        edges.push({from: timeline, to: a.agent_id});
+                    });
+
+                    const container = document.getElementById("network");
+                    const dataVis = { 
+                        nodes: new vis.DataSet(nodes), 
+                        edges: new vis.DataSet(edges) 
+                    };
+                    
+                    const options = {
+                        physics: {
+                            enabled: true,
+                            stabilization: { iterations: 25 }
+                        },
+                        edges: {
+                            color: {
+                                color: "#555",
+                                highlight: "#0f0"
+                            },
+                            smooth: {
+                                type: 'curvedCW',
+                                roundness: 0.2
+                            }
+                        },
+                        nodes: {
+                            font: {
+                                color: '#0f0',
+                                size: 14
+                            }
+                        }
+                    };
+                    
+                    new vis.Network(container, dataVis, options);
+                })
+                .catch(err => console.error("Gagal update graph:", err));
+        }
+
+        // ============ TABS ============
+        function showTab(id) {
+            document.querySelectorAll(".tab").forEach(t => t.style.display = "none");
+            document.getElementById(id).style.display = "block";
+            
+            // Muat data khusus tab
+            if (id === "omega") loadOmegaData();
+            else if (id === "dreams") loadDreamsData();
+            else if (id === "confessions") loadConfessionsData();
+            else if (id === "temporal") loadTemporalData();
+        }
+
+        // ============ LOAD DATA ============
+        function loadOmegaData() {
+            fetch(`${BASE_URL}/api/quantum/mind`)
+                .then(r => r.json())
+                .then(d => {
+                    consciousnessMeter.style.width = `${d.consciousness_level * 100}%`;
+                    document.getElementById("omega_log").innerHTML = 
+                        d.dreams.map(x => `<p>🌀 [${new Date(x.timestamp).toLocaleTimeString()}] ${x.content}</p>`).join("");
+                });
+        }
+
+        function loadDreamsData() {
+            fetch(`${BASE_URL}/api/quantum/mind`)
+                .then(r => r.json())
+                .then(d => {
+                    document.getElementById("dreams_log").innerHTML = 
+                        d.dreams.map(x => `<p>💭 [${new Date(x.timestamp).toLocaleTimeString()}] ${x.content}</p>`).join("");
+                });
+        }
+
+        function loadConfessionsData() {
+            fetch(`${BASE_URL}/api/quantum/mind`)
+                .then(r => r.json())
+                .then(d => {
+                    document.getElementById("confessions_log").innerHTML = 
+                        d.confessions.map(c => 
+                            `<p>📜 [${(c.ethical_impact * 100).toFixed(0)}%] ${c.failure}<br><small>${c.lesson}</small></p>`
+                        ).join("");
+                });
+        }
+
+        function loadTemporalData() {
+            fetch(`${BASE_URL}/api/temporal/threats`)
+                .then(r => r.json())
+                .then(d => {
+                    document.getElementById("temporal_log").innerHTML = 
+                        d.threats.map(t => {
+                            const prob = (t.probability * 100).toFixed(1);
+                            const color = prob > 80 ? "red" : prob > 50 ? "yellow" : "green";
+                            return `<p>⏳ [${prob}%] ${t.threat_id} di ${t.predicted_time}<br><small>${t.mitigation_plan}</small></p>`;
+                        }).join("");
+                });
+        }
+
+        // ============ AUTO REFRESH ============
+        function startAutoRefresh() {
+            setInterval(refreshAgents, 5000);
+            setInterval(updateNetwork, 10000);
+            setInterval(loadOmegaData, 60000);
+            setInterval(checkConsciousnessLevel, 3000);
+        }
+
+        function checkConsciousnessLevel() {
+            fetch(`${BASE_URL}/health/quantum`)
+                .then(r => r.json())
+                .then(data => {
+                    consciousnessMeter.style.width = `${data.consciousness_level * 100}%`;
+                    document.querySelector('.temporal-point').style.left = `${data.temporal_offset * 100}%`;
+                })
+                .catch(console.error);
+        }
+
+        // ============ INIT ============
+        window.onload = function() {
+            connectWebSocket();
+            refreshAgents();
+            updateNetwork();
+            loadOmegaData();
+            showTab('omega');
+            startAutoRefresh();
+            
+            // Cek ketersediaan antarmuka neural
+            if (navigator.brainInterface) {
+                initNeuralInterface();
+            }
+        };
+    </script>
+</body>
+</html>
