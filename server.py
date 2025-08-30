@@ -2,6 +2,7 @@ import os
 import logging
 import sqlite3
 from fastapi import FastAPI, WebSocket
+from fastapi.responses import HTMLResponse
 from collections import deque
 import paho.mqtt.client as mqtt
 import threading
@@ -95,6 +96,22 @@ def handle_command(command):
             cursor.execute("INSERT INTO actions (agent_id, action, target, status) VALUES (?, ?, ?, ?)", 
                            (agent_id, action, target, "failed"))
         db.commit()
+
+# Endpoint HTTP default
+@app.get("/", response_class=HTMLResponse)
+async def read_root():
+    html_content = """
+    <html>
+        <head><title>Throng Hive</title></head>
+        <body>
+            <h1>Welcome to Throng Hive</h1>
+            <p>This is a CLI-based agent monitoring system.</p>
+            <p>To use the CLI, connect to the WebSocket endpoint: <code>/ws</code> using a WebSocket client.</p>
+            <p>Supported commands: <code>{"agent_id": "test", "action": "spawn", "target": "192.168.1.10"}</code></p>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 
 # WebSocket untuk CLI
 @app.websocket("/ws")
