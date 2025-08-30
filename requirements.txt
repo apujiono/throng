@@ -1,10 +1,6 @@
 fastapi
-uvicorn
-paho-mqtt
-paramiko
-requests
-scikit-learn
-numpy
-pydantic
-pyjwt
+uvicorn[standard]
 jinja2
+paho-mqtt
+requests
+websockets
