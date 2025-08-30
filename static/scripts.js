@@ -1,220 +1,184 @@
-// scripts.js - No JWT Version
-
 let ws = null;
+let token = '';
 
 function showNotification(message, type = 'info') {
     const notification = document.getElementById('notifications');
-    const notif = document.createElement('div');
-    notif.className = 'notification';
-    notif.textContent = message;
-    notif.style.opacity = 1;
-
-    if (type === 'error') notif.style.borderLeftColor = '#ff3b3b';
-    else if (type === 'success') notif.style.borderLeftColor = '#00ff00';
-    else notif.style.borderLeftColor = '#00b7eb';
-
-    notif.onclick = () => {
-        notif.style.opacity = 0;
-        setTimeout(() => notif.remove(), 300);
-    };
-
-    notification.appendChild(notif);
-
+    notification.style.display = 'block';
+    notification.textContent = message;
+    notification.style.backgroundColor = type === 'error' ? '#dc3545' : '#28a745';
     setTimeout(() => {
-        if (notification.contains(notif)) {
-            notif.style.opacity = 0;
-            setTimeout(() => notif.remove(), 300);
-        }
+        notification.style.display = 'none';
     }, 5000);
 }
 
 function connectWebSocket() {
-    document.getElementById('connectionStatus').textContent = 'Connecting...';
+    token = document.getElementById('tokenInput').value;
+    if (!token) {
+        showNotification('Please enter a valid JWT token', 'error');
+        return;
+    }
+    localStorage.setItem('throngToken', token);
 
     if (ws) ws.close();
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-    ws = new WebSocket(wsUrl);
-
+    ws = new WebSocket(`wss://${window.location.host}/ws`);
     ws.onopen = () => {
-        document.getElementById('connectionStatus').textContent = 'Connected';
-        document.getElementById('connectionStatus').style.color = '#00ff00';
-        showNotification('Connected to Hive ✅');
-        fetchDashboard();
+        ws.send(JSON.stringify({ token }));
+        showNotification('Connected to Hive WebSocket');
     };
-
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        console.log('WS:', data);
         if (data.type === 'report') updateReport(data.data);
-        if (data.type === 'command') showNotification(`Command: ${data.data.action}`);
-        fetchDashboard(); // Refresh data
+        if (data.type === 'command') showNotification(`Command sent: ${data.data.action}`);
+        if (data.type === 'update') updateAgentStatus(data.data.agent_id, data.data.status);
     };
-
-    ws.onerror = (err) => {
-        console.error('WS error:', err);
-        showNotification('WebSocket error', 'error');
-    };
-
-    ws.onclose = () => {
-        document.getElementById('connectionStatus').textContent = 'Disconnected';
-        document.getElementById('connectionStatus').style.color = '#ffeb3b';
-        showNotification('Disconnected. Reconnecting...', 'error');
-        setTimeout(connectWebSocket, 3000);
-    };
+    ws.onerror = (error) => showNotification(`WebSocket error: ${error}`, 'error');
+    ws.onclose = () => showNotification('WebSocket disconnected', 'error');
 }
 
-async function fetchDashboard() {
-    try {
-        const res = await fetch("/api/data");
-        if (!res.ok) throw new Error("Failed to load data");
-        const data = await res.json();
-        updateAllTables(data);
-    } catch (err) {
-        showNotification("Load failed: " + err.message, "error");
+function updateAgentStatus(agentId, status) {
+    const table = document.getElementById('agentsTable');
+    const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+    for (let row of rows) {
+        if (row.cells[0].textContent === agentId) {
+            row.cells[1].textContent = status;
+            row.cells[1].style.color = status === 'active' ? '#00ff00' : '#ff0000';
+            break;
+        }
     }
-}
-
-function updateAllTables(data) {
-    // Update Agents
-    const agentsBody = document.querySelector("#agentsTable tbody");
-    agentsBody.innerHTML = "";
-    (data.agents || []).forEach(agent => {
-        const row = agentsBody.insertRow();
-        row.innerHTML = `
-            <td>${agent.agent_id}</td>
-            <td>${agent.status}</td>
-            <td>${agent.last_seen}</td>
-            <td>${agent.ip || '-'}</td>
-            <td>${agent.host || '-'}</td>
-            <td><button onclick="sendCommand('${agent.agent_id}', 'scan_target')">Scan</button></td>
-        `;
-    });
-    updateCount('agents');
-
-    // Update Reports
-    const reportsBody = document.querySelector("#reportsTable tbody");
-    reportsBody.innerHTML = "";
-    (data.reports || []).forEach(report => {
-        const row = reportsBody.insertRow();
-        const isAnomaly = report.data.is_anomaly ? '🔴 Yes' : '🟢 No';
-        row.innerHTML = `
-            <td>${report.agent_id}</td>
-            <td>${report.timestamp}</td>
-            <td>${report.data.network_traffic || 0}</td>
-            <td>${isAnomaly}</td>
-            <td>${report.data.ip || '-'}</td>
-        `;
-    });
-    updateCount('reports');
-
-    // Update Targets
-    const targetsBody = document.querySelector("#targetsTable tbody");
-    targetsBody.innerHTML = "";
-    (data.targets || []).forEach(target => {
-        const vulns = Array.isArray(target.vulnerability) ? target.vulnerability.join(', ') : '-';
-        const score = target.score ? target.score.toFixed(2) : '0.00';
-        const row = targetsBody.insertRow();
-        row.innerHTML = `
-            <td>${target.target}</td>
-            <td>${vulns}</td>
-            <td>${target.status}</td>
-            <td>${target.timestamp}</td>
-            <td>${score}</td>
-        `;
-    });
-    updateCount('targets');
-
-    // Update Emergency Logs
-    const emergencyBody = document.querySelector("#emergencyTable tbody");
-    emergencyBody.innerHTML = "";
-    (data.emergency_logs || []).forEach(log => {
-        const details = JSON.stringify(log.details, null, 2);
-        const row = emergencyBody.insertRow();
-        row.innerHTML = `
-            <td>${log.agent_id}</td>
-            <td>${log.action}</td>
-            <td><pre>${details}</pre></td>
-            <td>${log.timestamp}</td>
-        `;
-    });
-    updateCount('emergency');
-}
-
-function updateCount(tabName) {
-    const table = document.getElementById(`${tabName}Table`);
-    const count = table?.getElementsByTagName('tbody')[0]?.rows.length || 0;
-    const span = document.getElementById(`${tabName}Count`);
-    if (span) span.textContent = `(${count})`;
 }
 
 function updateReport(report) {
-    const tbody = document.querySelector("#reportsTable tbody");
-    const row = tbody.insertRow(0);
-    row.innerHTML = `
-        <td>${report.agent_id}</td>
-        <td>${report.timestamp}</td>
-        <td>${report.data.network_traffic || 0}</td>
-        <td>${report.data.is_anomaly ? '🔴 Yes' : '🟢 No'}</td>
-        <td>${report.data.ip || '-'}</td>
-    `;
-    updateCount('reports');
+    updateTable('reportsTable', [report], ['agent_id', 'data.timestamp', 'data.network_traffic', 'data.is_anomaly', 'data.ip'], (row, report) => {
+        row.cells[3].textContent = report.data.is_anomaly ? 'Yes' : 'No';
+        row.cells[3].style.color = report.data.is_anomaly ? '#ff0000' : '#00ff00';
+    });
 }
 
-async function sendCommand(agentId, action, target = null) {
-    try {
-        const res = await fetch("/command", {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ agent_id: agentId, action, target })
+function updateTable(tableId, data, columns, customRender = null) {
+    const table = document.getElementById(tableId);
+    const tbody = table.getElementsByTagName('tbody')[0];
+    let updated = false;
+
+    data.forEach(item => {
+        let row = Array.from(tbody.getElementsByTagName('tr')).find(r => r.cells[0].textContent === item.agent_id || r.cells[0].textContent === item.target);
+        if (!row) {
+            row = tbody.insertRow();
+            updated = true;
+        }
+        while (row.cells.length > columns.length + (tableId === 'agentsTable' ? 1 : 0)) row.deleteCell(-1);
+        columns.forEach((col, index) => {
+            const cell = row.cells[index] || row.insertCell(index);
+            const value = col.split('.').reduce((obj, key) => obj ? obj[key] : '', item) || 'N/A';
+            cell.textContent = value;
         });
-        const result = await res.json();
-        showNotification(result.status || action, 'success');
-    } catch (err) {
-        showNotification('Network error', 'error');
-    }
-}
+        if (customRender) customRender(row, item);
+        if (tableId === 'agentsTable' && !row.cells[5]) {
+            const actionsCell = row.insertCell(5);
+            const spawnButton = document.createElement('button');
+            spawnButton.textContent = 'Spawn';
+            spawnButton.onclick = () => sendCommand(item.agent_id, 'spawn_agent', '192.168.1.10');
+            actionsCell.appendChild(spawnButton);
+        }
+    });
 
-function openTab(tabName) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    document.getElementById(tabName).classList.add('active');
-    document.querySelector(`[onclick="openTab('${tabName}')"]`).classList.add('active');
+    if (updated) filterTable(tableId);
 }
 
 function filterTable(tableId) {
     const input = document.getElementById(`${tableId.replace('Table', 'Filter')}`).value.toLowerCase();
-    const rows = document.querySelector(`#${tableId} tbody`).rows;
-    for (let row of rows) {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(input) ? '' : 'none';
+    const table = document.getElementById(tableId);
+    const tr = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+
+    for (let i = 0; i < tr.length; i++) {
+        let found = false;
+        const td = tr[i].getElementsByTagName('td');
+        for (let j = 0; j < td.length - (tableId === 'agentsTable' ? 1 : 0); j++) {
+            if (td[j].textContent.toLowerCase().indexOf(input) > -1) {
+                found = true;
+                break;
+            }
+        }
+        tr[i].style.display = found ? '' : 'none';
     }
 }
 
 function sortTable(tableId, n) {
     const table = document.getElementById(tableId);
-    let switching = true, direction = 'asc';
+    let rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+    switching = true;
+    dir = 'asc';
+
     while (switching) {
         switching = false;
-        const rows = table.rows;
-        for (let i = 1; i < rows.length - 1; i++) {
-            const x = rows[i].cells[n], y = rows[i + 1].cells[n];
-            const shouldSwitch = direction === 'asc' ? x.textContent > y.textContent : x.textContent < y.textContent;
-            if (shouldSwitch) {
-                rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
-                switching = true;
-                break;
+        rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+
+        for (i = 0; i < (rows.length - 1); i++) {
+            shouldSwitch = false;
+            x = rows[i].getElementsByTagName('td')[n];
+            y = rows[i + 1].getElementsByTagName('td')[n];
+
+            if (dir === 'asc') {
+                if (x.textContent.toLowerCase() > y.textContent.toLowerCase()) {
+                    shouldSwitch = true;
+                    break;
+                }
+            } else if (dir === 'desc') {
+                if (x.textContent.toLowerCase() < y.textContent.toLowerCase()) {
+                    shouldSwitch = true;
+                    break;
+                }
             }
         }
-        if (!switching && direction === 'asc') direction = 'desc';
+
+        if (shouldSwitch) {
+            rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+            switching = true;
+            switchcount++;
+        } else if (switchcount === 0 && dir === 'asc') {
+            dir = 'desc';
+            switching = true;
+        }
     }
 }
 
+function sendCommand(agentId, action, target) {
+    if (!token) {
+        showNotification('Please connect with a valid JWT token first', 'error');
+        return;
+    }
+
+    fetch('/command', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ agent_id: agentId, action: action, target: target })
+    })
+    .then(response => response.json())
+    .then(data => showNotification(data.status))
+    .catch(error => showNotification(`Error sending command: ${error.message}`, 'error'));
+}
+
+function openTab(tabName) {
+    const tabs = document.getElementsByClassName('tab');
+    const tabContents = document.getElementsByClassName('tab-content');
+    for (let i = 0; i < tabs.length; i++) {
+        tabs[i].className = tabs[i].className.replace(' active', '');
+        tabContents[i].className = tabContents[i].className.replace(' active', '');
+    }
+    document.getElementById(tabName).className += ' active';
+    document.querySelector(`[onclick="openTab('${tabName}')"]`).className += ' active';
+}
+
+// Initial load
 document.addEventListener('DOMContentLoaded', () => {
-    connectWebSocket(); // Auto-connect
-    updateCount('agents');
-    updateCount('reports');
-    updateCount('targets');
-    updateCount('emergency');
+    const savedToken = localStorage.getItem('throngToken');
+    if (savedToken) {
+        document.getElementById('tokenInput').value = savedToken;
+    }
+});
+
+document.getElementById('tokenInput').addEventListener('change', (e) => {
+    localStorage.setItem('throngToken', e.target.value);
 });
