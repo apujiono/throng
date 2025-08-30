@@ -1,3 +1,10 @@
-console.log("Throng Hive is running!");
-// Tambahkan logika JS jika perlu, misalnya auto-refresh
-setInterval(() => location.reload(), 10000); // Refresh setiap 10 detik (opsional)
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+}
+h1 {
+    color: #333;
+}
+#agents, #reports {
+    margin: 10px 0;
+}
