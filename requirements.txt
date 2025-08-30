@@ -1,7 +1,6 @@
-fastapi
-uvicorn
-websockets
-paho-mqtt
-paramiko
+flask
 psutil
 requests
+paho-mqtt
+gunicorn
+numpy
