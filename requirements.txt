@@ -4,6 +4,5 @@ paho-mqtt
 jinja2
 requests
 psutil
-passlib[bcrypt]
-python-jose[cryptography]
+numpy
 python-multipart
