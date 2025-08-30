@@ -21,8 +21,13 @@ DEFAULT_SSH_USERNAME = os.getenv("DEFAULT_SSH_USERNAME", "admin")
 DEFAULT_SSH_PASSWORD = os.getenv("DEFAULT_SSH_PASSWORD", "admin")
 HISTORY_SIZE = 50
 
+# Pastikan direktori data ada
+if not os.path.exists("data"):
+    os.makedirs("data")
+DB_PATH = os.path.join("data", "throng.db")
+
 # Database
-db = sqlite3.connect("data/throng.db", check_same_thread=False)
+db = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = db.cursor()
 
 def init_db():
