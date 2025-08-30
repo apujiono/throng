@@ -2,90 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Throng Hive Dashboard</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>Throng Hive Dashboard</h1>
-        <div class="token-section">
-            <label for="tokenInput">JWT Token:</label>
-            <input type="text" id="tokenInput" placeholder="Enter JWT Token">
-            <button onclick="connectWebSocket()">Connect</button>
-        </div>
-        <div class="tabs">
-            <button class="tab active" onclick="openTab('agents')">Agents</button>
-            <button class="tab" onclick="openTab('reports')">Reports</button>
-            <button class="tab" onclick="openTab('targets')">Targets</button>
-            <button class="tab" onclick="openTab('emergency')">Emergency Logs</button>
-        </div>
-        <div id="agents" class="tab-content active">
-            <h2>Active Agents</h2>
-            <input type="text" id="agentFilter" placeholder="Filter agents..." onkeyup="filterTable('agentsTable')">
-            <table id="agentsTable">
-                <thead>
-                    <tr>
-                        <th onclick="sortTable('agentsTable', 0)">Agent ID</th>
-                        <th onclick="sortTable('agentsTable', 1)">Status</th>
-                        <th onclick="sortTable('agentsTable', 2)">Last Seen</th>
-                        <th onclick="sortTable('agentsTable', 3)">IP</th>
-                        <th onclick="sortTable('agentsTable', 4)">Host</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-        </div>
-        <div id="reports" class="tab-content">
-            <h2>Reports</h2>
-            <input type="text" id="reportFilter" placeholder="Filter reports..." onkeyup="filterTable('reportsTable')">
-            <table id="reportsTable">
-                <thead>
-                    <tr>
-                        <th onclick="sortTable('reportsTable', 0)">Agent ID</th>
-                        <th onclick="sortTable('reportsTable', 1)">Timestamp</th>
-                        <th onclick="sortTable('reportsTable', 2)">Traffic</th>
-                        <th onclick="sortTable('reportsTable', 3)">Anomaly</th>
-                        <th onclick="sortTable('reportsTable', 4)">IP</th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-        </div>
-        <div id="targets" class="tab-content">
-            <h2>Targets</h2>
-            <input type="text" id="targetFilter" placeholder="Filter targets..." onkeyup="filterTable('targetsTable')">
-            <table id="targetsTable">
-                <thead>
-                    <tr>
-                        <th onclick="sortTable('targetsTable', 0)">Target</th>
-                        <th onclick="sortTable('targetsTable', 1)">Vulnerabilities</th>
-                        <th onclick="sortTable('targetsTable', 2)">Status</th>
-                        <th onclick="sortTable('targetsTable', 3)">Timestamp</th>
-                        <th onclick="sortTable('targetsTable', 4)">Score</th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-        </div>
-        <div id="emergency" class="tab-content">
-            <h2>Emergency Logs</h2>
-            <input type="text" id="emergencyFilter" placeholder="Filter logs..." onkeyup="filterTable('emergencyTable')">
-            <table id="emergencyTable">
-                <thead>
-                    <tr>
-                        <th onclick="sortTable('emergencyTable', 0)">Agent ID</th>
-                        <th onclick="sortTable('emergencyTable', 1)">Action</th>
-                        <th onclick="sortTable('emergencyTable', 2)">Details</th>
-                        <th onclick="sortTable('emergencyTable', 3)">Timestamp</th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-        </div>
-        <div id="notifications"></div>
-    </div>
-    <script src="{{ url_for('static', path='/scripts.js') }}"></script>
+    <h1>Throng Hive Dashboard</h1>
+    <div id="agents"></div>
+    <div id="reports"></div>
+    <script src="/static/script.js"></script>
 </body>
 </html>
