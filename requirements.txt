@@ -1,6 +1,9 @@
 fastapi
-uvicorn[standard]
-jinja2
+uvicorn
 paho-mqtt
+jinja2
 requests
-websockets
+psutil
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
