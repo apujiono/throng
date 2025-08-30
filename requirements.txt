@@ -1,6 +1,9 @@
-flask
-psutil
-requests
+fastapi
+uvicorn
 paho-mqtt
-gunicorn
+paramiko
+requests
+scikit-learn
 numpy
+pydantic
+pyjwt
